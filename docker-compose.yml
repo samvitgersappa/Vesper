@@ -1,0 +1,137 @@
+# Vesper — Docker Compose topology (plan.md §15).
+#
+# Hermes Agent is NOT a service here. It is installed via its own installer
+# (Phase 3) and configured to reach this stack's module MCP servers over the
+# Docker network / localhost, per the Phase 0.5 RAM-spike decision.
+#
+# Resource limits reflect plan.md §15. Hermes Agent runs outside compose, so
+# the budget here targets postgres+redis+caddy+vesper-api+vesper-worker.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vesper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-vesper}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    mem_limit: 512m
+    mem_reservation: 350m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vesper}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "160mb", "--maxmemory-policy", "allkeys-lru", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    mem_limit: 192m
+    mem_reservation: 130m
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./frontend/out:/srv:ro
+    mem_limit: 64m
+    mem_reservation: 25m
+    depends_on:
+      - vesper-api
+
+  vesper-api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_MODE: api
+      PORT: "8000"
+      HERMES_VAULT_PATH: ${HERMES_VAULT_PATH_ABS}
+    volumes:
+      - data_backend:/app/backend/data
+      - data_lancedb:/app/data/lancedb
+      # Read-only vault mount (knowledge recall reads vault notes at the same
+      # absolute paths the DB records).
+      - ${HERMES_VAULT_PATH_ABS}:${HERMES_VAULT_PATH_ABS}:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    mem_limit: 768m
+    mem_reservation: 400m
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  vesper-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      APP_MODE: worker
+      # Mounted bind path must equal the host's absolute vault path so DB
+      # vault_path rows (written by host MCP servers) match container writes.
+      HERMES_VAULT_PATH: ${HERMES_VAULT_PATH_ABS}
+      HERMES_STATE_DB: /root/.hermes/state.db
+    command: ["python", "-m", "backend.main"]
+    volumes:
+      - data_backend:/app/backend/data
+      - data_lancedb:/app/data/lancedb
+      # Vault + Hermes state DB are bind-mounted so vault/state jobs work and
+      # their writes are visible on the host immediately.
+      - ${HERMES_VAULT_PATH_ABS}:${HERMES_VAULT_PATH_ABS}
+      - ${HOME}/.hermes:/root/.hermes
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # Transient, isolated so a burst can't inflate steady-state RAM (plan §15).
+    mem_limit: 1g
+
+  # Ollama local fallback (plan §14/§15) — OFF by default, on-demand only.
+  # Not part of the default `docker compose up`: start it only during an
+  # OpenCode Go outage with `docker compose --profile fallback up ollama`.
+  # OLLAMA_KEEP_ALIVE=5m unloads idle models after 5 min of inactivity so the
+  # ~2-4GB loaded-model footprint is NOT resident in steady state (plan §15).
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["fallback"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    environment:
+      OLLAMA_KEEP_ALIVE: "5m"
+    volumes:
+      - ollama_data:/root/.ollama
+    mem_limit: 4g
+    mem_reservation: 0
+
+volumes:
+  postgres_data:
+  data_backend:
+  data_lancedb:
+  caddy_data:
+  caddy_config:
+  ollama_data:

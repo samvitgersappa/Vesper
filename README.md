@@ -1,0 +1,247 @@
+# Vesper — Personal Intelligence Operating System
+
+One folder (`vesper/`) containing a complete personal-intelligence system: a
+Relationship OS, a Finance OS, and a Knowledge OS, unified behind a single
+cognitive engine — **Hermes Agent** (NousResearch/hermes-agent). Hermes Agent is
+installed via its own installer; it is never vendored into this repo. It plans
+and calls capabilities over **MCP**, and each module ships as an MCP server
+holding its own business logic. Hermes contains no domain logic.
+
+```
+┌────────────────────────────  Hermes Agent (separate process) ────────────────────────────┐
+│  Telegram gateway · skills · cron (Morning Brief, Daily Journal, Reviews)                │
+│  ── MCP ──▶ 8 module servers  ·  model escalation (hy3 → gpt-5.6-luna → Ollama → Groq)  │
+└───────────────────────────────────┬──────────────────────────────────────────────────────┘
+                                    │ MCP (stdin/stdout)
+      ┌─────────────────────────────┴──────────────────────────────┐
+      │                      vesper/ (this repo)                   │
+      │  modules/ (journal, relationship, knowledge, finance,      │
+      │           study, calendar, hobbies, graph — each an MCP     │
+      │           server + logic/)                                  │
+      │  events/ (Redis pub/sub bus)     automation/ (APScheduler)  │
+      │  db/ (Postgres schemas, DuckDB feature store, LanceDB)      │
+      │  api/ (FastAPI)  frontend/ (Next.js static)  caddy (proxy)  │
+      └─────────────────────────────────────────────────────────────┘
+```
+
+## What this is
+
+Vesper unifies three existing codebases into one Personal Intelligence OS:
+
+- **Relationship OS** (from ProjectVesper): CRM, force-graph, network science,
+  journal, study, hobbies, calendar, reminders.
+- **Finance OS** (from Quiver): live data pipeline, DuckDB feature store,
+  5 paper-trading strategies, 8 model portfolios, backtest tooling.
+- **Knowledge OS / Universal Inbox** (from VesperAIOS, via Hermes Agent):
+  vault (Obsidian) search, entity Q&A, Telegram/voice via Hermes Agent's
+  native gateway, automatic capture routing.
+
+## Repository layout
+
+```
+vesper/
+├── docker-compose.yml        # postgres, redis, caddy, vesper-api, vesper-worker
+├── start.sh                  # one-command idempotent bootstrap
+├── .env.example              # every environment variable the code reads
+├── plan.md                   # architecture authority (read this first)
+├── ADDENDUM_SECOND_BRAIN.md  # second-brain / vault / questionnaire decisions
+├── INVENTORY.md              # Phase 0 inventory of the three source repos
+├── backend/
+│   ├── main.py               # single FastAPI app; APP_MODE=api|worker
+│   ├── modules/<name>/       # one MCP server per module + logic/ (ported logic)
+│   ├── events/               # Redis pub/sub bus + event catalog (bus.py, catalog.py)
+│   ├── automation/           # plain-data job scheduler (scheduler.py + jobs/)
+│   ├── db/                   # Postgres schemas, alembic, DuckDB, LanceDB
+│   │   ├── postgres/         # SQLAlchemy models + alembic migrations
+│   │   ├── feature_store.py  # DuckDB price/factor persistence
+│   │   ├── duckdb_client.py  # embedded DuckDB client (rw + read-only)
+│   │   └── lancedb_client.py # semantic vault index (local TF-IDF embedder)
+│   ├── api/routers.py        # REST surface for the web dashboard
+│   ├── notification/         # Telegram-only notification triage + delivery
+│   └── config/               # settings.yaml, secrets.env.example
+├── hermes-config/            # configures the adopted Hermes Agent (NOT its source)
+│   ├── mcp_servers.json      # 8 module MCP servers (host-path template)
+│   ├── sync_mcp.py           # merges the template into ~/.hermes/config.yaml
+│   ├── provider.yaml         # hy3 (opencode-go) + gpt-5.6-luna/Ollama/Groq fallback
+│   ├── model_escalation.py   # plan §14 escalation (long-context / finance·study analyze)
+│   ├── skills/               # ask/search/people/portfolio/journal/study/calendar
+│   ├── cron/                 # Morning Brief, Daily Journal Questionnaire (+questions YAML),
+│   │                         # Evening/Weekly/Monthly Review, Knowledge Architect
+│   └── memory/               # TencentDB Agent Memory plugin config (L0–L3)
+├── frontend/                 # Next.js 15 app — static export served by Caddy
+│   ├── app/                  # dashboard, graph, people, journal, finance, study, calendar
+│   └── out/                  # build output (git-ignored; produced by start.sh)
+├── tests/                    # Phase 10 integration tests (pytest, needs the stack up)
+└── backend/data/raw/         # ind_nifty500list.csv — the bundled Nifty-500 universe
+```
+
+## Architecture invariants
+
+Read `plan.md` for the full architecture. The non-negotiable rules:
+
+1. **Hermes is the single cognitive engine; modules hold business logic. Hermes never does.**
+2. **Finance MCP server is read-only, no exceptions** — the worker/scheduler is the only Finance writer (plan §16).
+3. **Event bus (Redis pub/sub) for module-to-module decoupling**; Hermes sits *outside* that graph, at the edges only (plan §0/§6).
+4. **Journal is vault-backed** — content lives in the Obsidian vault at `00 Journal/YYYY/YYYY-MM-DD.md`; `diary_entries` is metadata only (plan §8.3).
+5. **Notifications are Telegram-only** (addendum §11 — no ntfy); the worker triages and sends via the Bot API.
+6. **Daily Journal Questionnaire** (addendum §2): 21:30 IST cron skill; `journal.complete_day` publishes `DailyJournalCompleted`; Evening Review is event-driven off it with a scheduled fallback; the 23:55 IST worker job guarantees a record exists before midnight.
+
+## The data stores
+
+| Store | Technology | Purpose |
+|---|---|---|
+| Postgres | `postgres:16` | System of record — relationship, journal metadata, finance accounts/trades, study, hermes, graph (8 schemas, 45 tables) |
+| Redis | `redis:7` | Event bus (pub/sub), ephemeral |
+| DuckDB | `quiver.duckdb` | Analytical feature store — `equity_daily`, `macro_series`, `factor_features`, `index_membership`, `symbol_mapping` |
+| LanceDB | `data/lancedb` | Semantic index over the Obsidian vault (local TF-IDF, no external embedding API) |
+| Obsidian vault | `~/Documents/KnowledgeVault` | Source of truth for journal + knowledge notes (`00 Journal/`, `03 Knowledge/`, …) |
+| Hermes state | `~/.hermes/state.db` | Hermes Agent's own SQLite (tool-call/usage mirror source) |
+
+## Scheduled jobs (APScheduler worker)
+
+| Job | Schedule (IST) | What it does |
+|---|---|---|
+| `fetch_equity` | 06:00 daily | Pulls the Nifty-500 universe from yfinance into `equity_daily` |
+| `compute_factors` | 06:30 daily | Computes 7 factors per symbol into `factor_features` |
+| `fetch_macro` | 07:00 daily | Pulls 8 macro series (Nifty, VIX, USD/INR, crude, gold, …) |
+| `update_universe` | 07:30 daily | Refreshes `index_membership` from the bundled Nifty CSV |
+| `paper_trade_eod` | 17:00 Mon–Fri | End-of-day mark-to-market for all paper traders → `paper_nav_history` |
+| `knowledge_architect_pass` | 02:30 daily | Vault re-org / consolidation pass |
+| `graph_analytics_pass` | 03:00 daily | Community detection + relationship analytics → `graph_snapshots` |
+| `index_vault_semantic` | 03:15 daily | Rebuilds the LanceDB semantic index from the vault |
+| `crm_followups_sweep` | every 1h | Due reminder follow-up sweep |
+| `rss_process` | 06:45 Mon | Routes RSS feeds through `knowledge.capture` |
+| `journal_questionnaire_deadline` | 23:55 daily | Guarantees a journal record exists before midnight |
+| `vault_backup_publish` | 00:15 daily | Pushes the Obsidian vault to a private GitHub repo (+ optional Quartz rebuild) |
+| `hermes_mirror` | every 5m | Mirrors Hermes tool-calls/usage into the `hermes` Postgres schema |
+| `notification_sweep_morning` | 08:00 daily | Morning Telegram digest |
+| `notification_sweep_evening` | 18:00 daily | Evening Telegram digest |
+
+Every finance job logs to `finance.job_runs` and degrades honestly (records a
+`degraded` run) instead of failing the worker or fabricating data.
+
+## Module MCP servers (57 tools)
+
+| Server | Tools | Purpose |
+|---|---|---|
+| journal | 9 | `write_entry`, `get_entry`, `complete_day`, `log_workout`, `log_expense`, streak, resolve… |
+| relationship | 17 | people CRUD, interactions, reminders, introductions, gift ideas, health, search, stats |
+| knowledge | 7 | `capture` (routing), vault search, unified recall (vault + LanceDB + journal), notes edit/delete |
+| finance | 4 | portfolio, trades, signals, nav (read-only) |
+| study | 8 | tests, readiness, percentiles, study plan |
+| calendar | 2 | birthdays, events |
+| hobbies | 5 | activity tracking |
+| graph | 5 | nodes, edges, analytics, community |
+
+## Quick start
+
+### Requirements
+
+- macOS or Linux
+- Docker + Docker Compose plugin
+- Node.js 18+ (for the frontend build)
+- Python 3.12+ (for the local venv used by Hermes MCP servers)
+- A Hermes Agent install (optional but recommended)
+
+### One command
+
+```bash
+./start.sh
+```
+
+`start.sh` is idempotent and does all of the following:
+
+1. **Preflight** — checks Docker + Compose.
+2. **Secrets** — on first run, copies `.env.example` → `.env`, prompts for the
+   OpenCode Go API key, Telegram bot token + your user ID, and (optionally) the
+   vault-backup GitHub creds; generates `POSTGRES_PASSWORD` + `JWT_SECRET`.
+3. **Frontend** — builds the Next.js static export into `frontend/out`.
+4. **Data layer** — starts postgres, redis, caddy; runs `alembic upgrade head`;
+   initialises the DuckDB feature-store schema. Result: a **fully-initialised
+   but empty** database (45 Postgres tables + 5 DuckDB tables).
+5. **Module layer** — builds and starts `vesper-api` + `vesper-worker`.
+6. **Hermes config** — if Hermes Agent is installed, syncs the 8 Vesper MCP
+   servers into `~/.hermes/config.yaml` with host paths.
+7. **Health check** — prints stack status and handoff URLs.
+
+### Manual alternative
+
+```bash
+cp .env.example .env            # fill in secrets
+docker compose up -d            # postgres + redis + caddy + vesper-api
+docker compose up -d --build vesper-worker   # worker runs the scheduler
+```
+
+### Pointing Hermes Agent at this repo
+
+1. Install Hermes Agent with its standard installer (plan.md §0 / Phase 3).
+2. Set the default model: `hermes model` → `opencode-go` / `hy3`.
+3. Register the module MCP servers:
+   ```bash
+   .venv/bin/python hermes-config/sync_mcp.py ~/.hermes/config.yaml
+   ```
+4. Apply `hermes-config/provider.yaml` (fallback chain) and
+   `hermes-config/model_escalation.py` per plan §14.
+5. Install the TencentDB Agent Memory plugin per its documented path, using
+   `hermes-config/memory/tencentdb-agent-memory.yaml`.
+6. Configure the Telegram gateway, then drop `hermes-config/skills/*.skill`
+   into Hermes Agent's skills directory.
+7. Copy the cron skills (`hermes-config/cron/*`, incl.
+   `daily_journal_questionnaire` + `daily_journal_questions.yaml`) into Hermes
+   Agent's cron schedule (21:30 IST daily).
+
+Hermes Agent connects to `vesper/`'s module MCP servers over the local network /
+stdin-stdout — it never imports anything from this repo.
+
+## Configuration reference (`.env`)
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `OPENCODE_GO_API_KEY` | OpenCode Go provider key (hy3 primary, gpt-5.6-luna fallback) | (empty — required) |
+| `TELEGRAM_BOT_TOKEN` | Bot token for notifications | (empty) |
+| `TELEGRAM_ALLOWED_USERS` | Your numeric Telegram ID (recipient) | (empty) |
+| `TELEGRAM_HOME_CHANNEL` | Optional group/channel chat ID; falls back to `TELEGRAM_ALLOWED_USERS` | (empty) |
+| `POSTGRES_USER` / `_PASSWORD` / `_DB` | Postgres credentials | `vesper` / generated / `vesper` |
+| `DATABASE_URL` | asyncpg URL (in-network `postgres` host for Docker) | `postgresql+asyncpg://…@postgres:5432/vesper` |
+| `REDIS_URL` | Redis URL (in-network for Docker; host MCP servers use bus.py's `localhost` default) | `redis://redis:6379/0` |
+| `JWT_SECRET` | Dashboard JWT signing key | generated |
+| `HERMES_VAULT_PATH` | Obsidian vault root | `~/Documents/KnowledgeVault` |
+| `HERMES_STATE_DB` | Hermes Agent SQLite state | `~/.hermes/state.db` |
+| `GH_PAT` / `VAULT_REPO_URL` | Vault backup to a private GitHub repo (addendum §7) | (empty — optional) |
+| `VAULT_GIT_REMOTE` | Full git remote URL (overrides `VAULT_REPO_URL` + `GH_PAT`) | (empty) |
+| `QUARTZ_DIR` / `QUARTZ_OUTPUT` | Optional Quartz digital-garden rebuild | (empty) |
+| `RSS_FEEDS` | Comma-separated RSS feed URLs for `rss_process` | (empty) |
+
+## Tests
+
+```bash
+VESPER_TESTING=1 .venv/bin/python -m pytest tests/   # needs the stack up
+```
+
+13 integration tests cover relationship stats/search, journal streak +
+`complete_day` round-trip, the 23:55 deadline job, the graph write adapter,
+LanceDB index + search, scheduler registration, the finance feature store +
+universe refresh, notification triage, the REST API, and the event catalog.
+
+## Web dashboard
+
+The Phase 8 Next.js dashboard is served by Caddy at `http://localhost/` (static
+export in `frontend/out/`). Pages: Dashboard, Graph OS, People, Journal,
+Finance, Study, Calendar. The API lives at `http://localhost:8000` (`/health`,
+`/api/relationship/*`, `/api/journal/*`, `/api/study/*`, `/api/finance/*`,
+`/api/graph/*`, `/api/calendar/*`, `/api/hobbies`).
+
+## Deployment
+
+See **[`DEPLOYMENT.md`](DEPLOYMENT.md)** for a full production walkthrough:
+server provisioning, Docker deployment, Hermes Agent install + config, the
+nightly vault-backup push, backups/restores, monitoring, and operational
+runbooks.
+
+## Status
+
+Phases 0–8 and 10 of `coding_prompt.md` are implemented and verified end-to-end
+(inventory, data layer, Hermes config, module MCP servers, gateway + skills,
+notification, automation, web frontend, integration tests). Phase 12 automation
+is fully live with a real yfinance finance pipeline. See `INVENTORY.md` for the
+RAM-spike numbers and `plan.md` for the architecture.

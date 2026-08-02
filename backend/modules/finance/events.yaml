@@ -1,0 +1,9 @@
+# Finance module event manifest (plan.md §6)
+# Read-only MCP server (plan §16) — never publishes from the agent path. The
+# worker/scheduler is the only writer and emits TradeExecuted /
+# PortfolioNAVUpdated from data jobs, not from this module's MCP server.
+publishes: []
+#  - TradeExecuted        (emitted by the worker, not the MCP server)
+#  - PortfolioNAVUpdated  (emitted by the worker, not the MCP server)
+
+subscribes: []

@@ -1,0 +1,8 @@
+# Study module event manifest (plan.md §6)
+# Completing a test/mock-tests run triggers exam-readiness commentary in the
+# Automation tier. Publish StudyCompleted from a "mark completed" write path
+# when one is added; the current read/list tools do not emit it.
+publishes: []
+#  - StudyCompleted  (future "mark test complete" write path)
+
+subscribes: []

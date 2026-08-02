@@ -1,0 +1,27 @@
+# TencentDB Agent Memory plugin config for Hermes Agent (plan.md §7).
+#
+# Conversational L0–L3 pyramid: L0 conversation → L1 atom → L2 scenario →
+# L3 persona, with hybrid BM25 + vector + RRF recall. Backing store is local
+# SQLite + sqlite-vec — zero external API dependency.
+#
+# Phase 1 scaffold: this file is the plugin's config surface; the plugin is
+# installed against Hermes Agent in Phase 3 (hermes-plugin/memory/memory_tencentdb).
+
+memory:
+  enabled: true
+  backend: local-sqlite
+  sqlite_path: /app/hermes-config/memory/tencentdb.sqlite
+  vec_extensions:
+    - sqlite-vec
+  layers:
+    l0_conversation: true
+    l1_atom: true
+    l2_scenario: true
+    l3_persona: true
+  recall:
+    bm25_weight: 0.35
+    vector_weight: 0.35
+    rrf: true
+  storage:
+    markdown: true        # every intermediate layer inspectable as Markdown
+    persona_file: /app/hermes-config/memory/persona.md

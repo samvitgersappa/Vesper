@@ -1,0 +1,10 @@
+# Knowledge module event manifest (plan.md §6)
+# Vault writes (capture rules 5/6, update_note/delete_note) emit
+# KnowledgeIndexed; the nightly Knowledge Architect batch listens for structure
+# refresh notices after its own pass.
+publishes:
+  - KnowledgeIndexed
+
+subscribes:
+  - JournalCreated
+  - KnowledgeArchitectPassCompleted

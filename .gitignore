@@ -1,0 +1,26 @@
+# Env / secrets
+.env
+backend/config/secrets.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Data / state
+*.db
+*.duckdb
+/data/
+backend/data/**
+!backend/data/raw/
+!backend/data/raw/**
+
+# Node / frontend
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Hermes Agent runtime data
+hermes-config/memory/*.sqlite
+hermes-config/memory/persona.md

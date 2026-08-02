@@ -1,0 +1,24 @@
+# Vesper configuration settings
+# Phase 1 scaffold. Real settings for providers, modules, and paths are
+# finalized as each phase lands.
+
+runtime:
+  app_mode: api            # api | worker
+  port: 8000
+
+database:
+  postgres_url: postgresql+asyncpg://vesper:vesper@postgres:5432/vesper
+  duckdb_path: /data/feature_store/quiver.duckdb
+
+redis:
+  url: redis://redis:6379/0
+
+automation:
+  timezone: Asia/Kolkata
+  # Phase 7 fills in real data-job schedules here (market jobs, RSS, graph analytics).
+  jobs: {}
+
+hermes:
+  # Path/registration info for the adopted Hermes Agent instance (Phase 3).
+  mcp_config: /app/hermes-config/mcp_servers.json
+  provider_config: /app/hermes-config/provider.yaml

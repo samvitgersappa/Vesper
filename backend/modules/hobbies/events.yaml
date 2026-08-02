@@ -1,0 +1,6 @@
+# Hobbies module event manifest (plan.md §6)
+# Hobbies is a JSON column on persons; PersonUpdated (published by Relationship)
+# is the relevant signal for hobby-adjacent changes. No events published.
+publishes: []
+
+subscribes: []

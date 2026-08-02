@@ -1,0 +1,41 @@
+# Hermes Agent provider config (plan.md §5, §14).
+# Default: hy3 (opencode-go, cheap tier). Fallback chain:
+# opencode-go gpt-5.6-luna → local Ollama → Groq.
+# Applied via `hermes model` / `hermes fallback` in ~/.hermes/config.yaml.
+#
+# Status 2026-08-02: deepseek-v4-flash is region-gated (China opt-in). The
+# opencode-go weekly usage limit was reached 2026-08-01; hy3/gpt-5.6-luna
+# resume once the cap resets (~2026-08-03). Until then the chain falls back to
+# Ollama. Left in place per user decision — the routing stays as configured.
+
+model:
+  default: hy3
+  provider: opencode-go
+
+providers:
+  opencode-go:
+    name: OpenCode Go
+    default_model: hy3
+    base_url: https://opencode.ai/zen/go/v1
+    key_env: OPENCODE_GO_API_KEY
+
+fallback_providers:
+  - provider: opencode-go
+    model: gpt-5.6-luna
+  - provider: ollama
+    model: llama3.2
+    base_url: http://127.0.0.1:11434/v1
+  - provider: groq
+    model: llama-3.1-8b-instant
+    key_env: GROQ_API_KEY
+
+# Auxiliary vision model (addendum §8): Kimi K2.5 via the existing OpenCode Go
+# subscription — no new provider needed. Used by the built-in vision_analyze
+# tool when the main model (hy3, text-only) receives an image.
+# Safe to add while opencode-go is rate-limited; works once the limit resets.
+auxiliary:
+  vision:
+    provider: custom
+    model: kimi-k2.5
+    base_url: https://opencode.ai/zen/go/v1
+    api_key: ${OPENCODE_GO_API_KEY}

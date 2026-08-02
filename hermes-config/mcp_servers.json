@@ -1,0 +1,60 @@
+{
+  "mcpServers": {
+    "knowledge": {
+      "command": "VENV_PYTHON",
+      "args": ["REPO_ROOT/backend/modules/knowledge/mcp_server.py"],
+      "env": { "PYTHONPATH": "REPO_ROOT" },
+      "cwd": "REPO_ROOT",
+      "enabled": true
+    },
+    "relationship": {
+      "command": "VENV_PYTHON",
+      "args": ["REPO_ROOT/backend/modules/relationship/mcp_server.py"],
+      "env": { "PYTHONPATH": "REPO_ROOT" },
+      "cwd": "REPO_ROOT",
+      "enabled": true
+    },
+    "journal": {
+      "command": "VENV_PYTHON",
+      "args": ["REPO_ROOT/backend/modules/journal/mcp_server.py"],
+      "env": { "PYTHONPATH": "REPO_ROOT" },
+      "cwd": "REPO_ROOT",
+      "enabled": true
+    },
+    "study": {
+      "command": "VENV_PYTHON",
+      "args": ["REPO_ROOT/backend/modules/study/mcp_server.py"],
+      "env": { "PYTHONPATH": "REPO_ROOT" },
+      "cwd": "REPO_ROOT",
+      "enabled": true
+    },
+    "hobbies": {
+      "command": "VENV_PYTHON",
+      "args": ["REPO_ROOT/backend/modules/hobbies/mcp_server.py"],
+      "env": { "PYTHONPATH": "REPO_ROOT" },
+      "cwd": "REPO_ROOT",
+      "enabled": true
+    },
+    "calendar": {
+      "command": "VENV_PYTHON",
+      "args": ["REPO_ROOT/backend/modules/calendar/mcp_server.py"],
+      "env": { "PYTHONPATH": "REPO_ROOT" },
+      "cwd": "REPO_ROOT",
+      "enabled": true
+    },
+    "finance": {
+      "command": "VENV_PYTHON",
+      "args": ["REPO_ROOT/backend/modules/finance/mcp_server.py"],
+      "env": { "PYTHONPATH": "REPO_ROOT" },
+      "cwd": "REPO_ROOT",
+      "enabled": true
+    },
+    "graph": {
+      "command": "VENV_PYTHON",
+      "args": ["REPO_ROOT/backend/modules/graph/mcp_server.py"],
+      "env": { "PYTHONPATH": "REPO_ROOT" },
+      "cwd": "REPO_ROOT",
+      "enabled": true
+    }
+  }
+}

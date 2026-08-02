@@ -1,0 +1,8 @@
+# Relationship module event manifest (plan.md §6)
+# CRM writes publish PersonUpdated / InteractionLogged; graph recompute and
+# notification thresholds subscribe downstream (Graph/Notification).
+publishes:
+  - PersonUpdated
+  - InteractionLogged
+
+subscribes: []

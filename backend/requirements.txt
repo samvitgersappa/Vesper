@@ -1,0 +1,26 @@
+# Vesper backend runtime requirements.
+# Phase 1 scaffold — grows as each phase lands.
+fastapi
+uvicorn[standard]
+redis
+apscheduler
+alembic
+sqlalchemy[asyncio]
+asyncpg
+pydantic-settings
+fastmcp
+duckdb
+pandas
+pyyaml
+python-dotenv
+aiosqlite
+# Phase 4 — module MCP server port dependencies.
+networkx
+python-louvain
+feedparser
+python-dateutil
+# Phase 7/13 — LanceDB semantic layer (local TF-IDF embedder; no external API).
+lancedb
+numpy
+# Phase 12 — live market data for the finance EOD pipeline (fetch_equity/macro).
+yfinance

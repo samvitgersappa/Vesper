@@ -1,0 +1,8 @@
+# Calendar module event manifest (plan.md §6)
+# Read-only aggregation over person/interaction/reminder/study data; events are
+# emitted by the source modules. If a write path is ever added here, emit
+# CalendarEventCreated.
+publishes: []
+#  - CalendarEventCreated  (future write path only)
+
+subscribes: []

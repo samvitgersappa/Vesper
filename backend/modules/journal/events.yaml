@@ -1,0 +1,13 @@
+# Journal module event manifest (plan.md §6)
+# `diary_entries` is vault-backed (plan §8.3); content writes happen through
+# the vault, so journaling events are emitted by write_entry/vault_sync.
+publishes:
+  - JournalCreated
+  # Addendum §2.7 — emitted by complete_day (Daily Journal Questionnaire full
+  # completion or the 23:55 placeholder). Evening Review subscribes.
+  - DailyJournalCompleted
+
+subscribes:
+  # vault_sync consumes KnowledgeIndexed to upsert diary metadata for vault
+  # journal files (plan §8.3, Phase 4 item 6).
+  - KnowledgeIndexed

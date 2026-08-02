@@ -1,0 +1,57 @@
+# Daily Journal Questionnaire — fixed question set (addendum §2.2, plan.md §12.1)
+# Versioned config, not hardcoded in the skill, so the set is easy to tune.
+# Questions 1–6 are the hard requirements; 7–9 are the proposed additions
+# (confirmed in §2.2 of the addendum). They stay in this order, every day.
+version: 1
+
+questions:
+  - id: 1
+    weekday_question: "How was your day in office?"
+    default_question: "How was your day?"
+  - id: 2
+    question: "Any major accomplishments or tasks you completed today?"
+  - id: 3
+    question: "What did you learn today — and where do you plan to (or already did) apply it?"
+  - id: 4
+    question: "Any specific reminders you want me to hold onto for the future, based on today?"
+  - id: 5
+    question: "Did you work out today? If so, what did you do, and which muscle groups did you target?"
+  - id: 6
+    question: "What did you spend today?"
+    accepts: "one amount or several ('300 on lunch, 150 on the cab'); sums and categorizes each; 'nothing'/'not tracking today' must not block completion"
+  - id: 7
+    question: "How would you rate your energy or mood today, and what mainly influenced it?"
+  - id: 8
+    question: "Did you connect with anyone worth logging today — anyone I should update in your contacts?"
+  - id: 9
+    question: "Anything on your mind about tomorrow?"
+
+# §2.8 turn-taking — group fixed questions into fewer conversational turns.
+# The fixed content stays as specified; only the turn order groups them.
+groups:
+  - label: "day"
+    questions: [1, 2, 3]
+  - label: "log"
+    questions: [5, 6]
+  - label: "wellbeing"
+    questions: [7, 8, 9]
+  - label: "reminders"
+    questions: [4]
+
+# §2.5 escalation times (IST) — snooze and retry, never one silent attempt.
+schedule:
+  initial: "21:30"
+  retries: ["22:15", "23:00", "23:40"]
+  final_retry_shortcut: "Let's do the 60-second version — one thing about today, and any reminders (questions 1 and 4 only)."
+  hard_deadline: "23:55"
+
+# §2.8 quick mode — a valid, complete entry with fewer questions.
+quick_mode_questions: [1, 4, 6]
+
+# §2.4 decomposition map — which answer feeds which store.
+mapping:
+  mood: [1, 7]
+  reminders: [4]
+  learning_note: [3]
+  workout_log: [5]
+  spending_log: [6]

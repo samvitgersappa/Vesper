@@ -1,0 +1,10 @@
+# Graph module event manifest (plan.md §6)
+# Read-only analytics over the universal graph (plan §10). Node/edge writes are
+# done by per-entity adapters from source modules (PersonUpdated →
+# recompute edges); this module itself consumes those events in Phase 9.
+publishes: []
+
+subscribes:
+  - PersonUpdated
+  - InteractionLogged
+  - KnowledgeIndexed
