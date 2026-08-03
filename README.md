@@ -102,7 +102,7 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 
 | Store | Technology | Purpose |
 |---|---|---|
-| Postgres | `postgres:16` | System of record — relationship, journal metadata, finance accounts/trades, study, hermes, graph (8 schemas, 45 tables) |
+| Postgres | `postgres:16` | System of record — relationship, journal metadata, finance accounts/trades, study, hermes, graph (7 schemas, 56 tables) |
 | Redis | `redis:7` | Event bus (pub/sub), ephemeral |
 | DuckDB | `quiver.duckdb` | Analytical feature store — `equity_daily`, `macro_series`, `factor_features`, `index_membership`, `symbol_mapping` |
 | LanceDB | `data/lancedb` | Semantic index over the Obsidian vault (local TF-IDF, no external embedding API) |
@@ -130,22 +130,34 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 | `hermes_mirror` | every 5m | Mirrors Hermes tool-calls/usage into the `hermes` Postgres schema |
 | `notification_sweep_morning` | 08:00 daily | Morning Telegram digest |
 | `notification_sweep_evening` | 18:00 daily | Evening Telegram digest |
+| `fetch_catalyst_bhavcopy` | 18:00 Mon–Fri | NSE Common Bhavcopy delivery data → `delivery_stats` |
+| `fetch_fii_dii` | 18:05 Mon–Fri | NSE provisional FII/DII net flows → `market_sentiment_daily` |
+| `fetch_index_pcr` | 18:07 Mon–Fri | Nifty/BankNifty index option-chain PCR → `index_options_sentiment` |
+| `fetch_sector_indices` | 18:10 Mon–Fri | yfinance sector indices → `sector_scores_daily` |
+| `compute_market_breadth` | 18:15 Mon–Fri | A/D, % > 50DMA/200DMA, 52w highs/lows from `equity_daily` |
+| `catalyst_screen` | 18:20 Mon–Fri | Layer 1/2/3 multiplicative scoring → `catalyst_scores` + watchlist funnel |
+| `catalyst_llm` | 18:40 Mon–Fri | Capped DeepSeek V4 Flash catalyst analysis over the top of the funnel |
+| `catalyst_risk` | 18:50 Mon–Fri | Exits-only risk pass: ATR/trailing stops, rank, negative-catalyst, time |
+| `catalyst_paper_trade` | 19:00 Mon–Fri | Catalyst Swing entries (cost-gated) + NAV snapshot |
 
 Every finance job logs to `finance.job_runs` and degrades honestly (records a
 `degraded` run) instead of failing the worker or fabricating data.
 
-## Module MCP servers (57 tools)
+## Module MCP servers (64 tools)
 
 | Server | Tools | Purpose |
 |---|---|---|
 | journal | 9 | `write_entry`, `get_entry`, `complete_day`, `log_workout`, `log_expense`, streak, resolve… |
-| relationship | 17 | people CRUD, interactions, reminders, introductions, gift ideas, health, search, stats |
+| relationship | 18 | people CRUD, interactions, reminders, introductions, gift ideas, health, search, stats, draft_message |
 | knowledge | 7 | `capture` (routing), vault search, unified recall (vault + LanceDB + journal), notes edit/delete |
-| finance | 4 | portfolio, trades, signals, nav (read-only) |
+| finance | 9 | portfolio, trades, signals, nav + catalyst_scores, catalyst_candidates, catalyst_positions, catalyst_usage, catalyst_cost_gate (read-only) |
 | study | 8 | tests, readiness, percentiles, study plan |
-| calendar | 2 | birthdays, events |
+| calendar | 3 | birthdays, events, on_this_day |
 | hobbies | 5 | activity tracking |
 | graph | 5 | nodes, edges, analytics, community |
+
+The Finance server is strictly read-only; the worker/scheduler is the only writer to the
+`finance` schema (plan §16).
 
 ## Quick start
 
@@ -225,6 +237,10 @@ stdin-stdout — it never imports anything from this repo.
 | `VAULT_GIT_REMOTE` | Full git remote URL (overrides `VAULT_REPO_URL` + `GH_PAT`) | (empty) |
 | `QUARTZ_DIR` / `QUARTZ_OUTPUT` | Optional Quartz digital-garden rebuild | (empty) |
 | `RSS_FEEDS` | Comma-separated RSS feed URLs for `rss_process` | (empty) |
+| `CATALYST_LLM_BASE_URL` | Catalyst LLM OpenAI-compatible base URL | `https://api.deepseek.com/v1` |
+| `CATALYST_LLM_API_KEY` | Catalyst LLM key (falls back to `OPENCODE_GO_API_KEY`) | (empty — catalyst LLM stage degrades to `signal=none`) |
+| `CATALYST_LLM_MODEL` | Catalyst LLM model | `deepseek-v4-flash` |
+| `CATALYST_TRADER_MAX_LLM_CALLS_PER_DAY` | Daily catalyst LLM call budget | `65` |
 
 ## Tests
 

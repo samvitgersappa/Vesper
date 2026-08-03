@@ -155,7 +155,7 @@ path). It will:
      stack without them (services degrade gracefully).
 3. Build the frontend (npm) into `frontend/out/`.
 4. Start `postgres`, `redis`, `caddy`.
-5. Run `alembic upgrade head` → creates **45 tables across 8 schemas**, all
+5. Run `alembic upgrade head` → creates **56 tables across 7 schemas**, all
    empty.
 6. Initialise the DuckDB feature store (5 tables, empty).
 7. Build + start `vesper-api` and `vesper-worker`.

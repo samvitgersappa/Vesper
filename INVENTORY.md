@@ -629,6 +629,40 @@ a real Telegram account. Config touched: `approvals: mode: manual`,
 the server (Phase 4). To run: `docker compose up` for postgres/redis, point `~/.hermes` at the
 stack, then send a real message / voice note and inspect hermes' MCP audit trail.
 
+### 6.7 Phase 6 — Catalyst Swing Trader (Part E) — DONE (2026-08-03)
+
+**Divergence log — Trader 6 data sources.** The Trader 6 Data Acquisition Guide names NSE
+endpoints (archives.nseindia.com bhavcopy, `fiidiiTradeReact`, `option-chain-indices`) and
+yfinance sector indices. Live verification on this box:
+
+- The **bhavcopy URL** (`archives.nseindia.com/products/content/sec_bhavdata_full_<date>.csv`)
+  publishes the *previous* trading day's CSV (T-1) — a 2026-08-03 run returns nothing for
+  2026-08-03 but the 2026-07-31 file. The job records a `degraded` run rather than an empty
+  table and is happy with T-1 delivery data (the pipeline never fabricates).
+- **NSE API calls** (`fiidiiTradeReact`, `option-chain-indices`) need the homepage cookie
+  handshake and still 403 when NSE rate-limits; the client does the handshake + 3 retries and
+  degrades to `market_sentiment_daily` / `index_options_sentiment` staying empty. The Layer-1
+  market score then leans on breadth + VIX (both computed from the feature store), i.e. the
+  pipeline degrades gracefully — no abort, no fabricated flows.
+- **Sector indices** (`^CNXAUTO`, `^CNXIT`, `^CNXPHARMA`, `^CNXFMCG`, `^CNXMETAL`,
+  `^CNXENERGY`, `^CNXMEDIA`, `^CNXREALTY`, `^NSEBANK`) on yfinance are `CLOSED` for most of
+  these tickers (index prices stopped updating on Yahoo); only a couple resolve current bars.
+  `fetch_sector_indices` therefore usually lands `degraded` with an empty `sector_scores_daily`,
+  and Layer 2 defaults to neutral 0.5 — a deliberate, honest fallback rather than synthesizing
+  sector momentum. The sector *map* (`sector_for_symbol`) still works off the bundled
+  `ind_nifty500list.csv`, so the funnel and scoring don't depend on the live sector fetch.
+- **Breadth** is computed from `equity_daily` (universe closes) — fully local, works when the
+  equity pipeline (06:00 `fetch_equity`) has run.
+- **LLM stage:** `CATALYST_LLM_*` env (default DeepSeek V4 Flash) — with no API key set the
+  stage degrades honestly: every candidate is recorded `signal=none`, `llm_analyzed=true`,
+  never a fabricated verdict. Daily budget `CATALYST_TRADER_MAX_LLM_CALLS_PER_DAY` (65)
+  enforced via `finance.catalyst_llm_usage`; every call audited in `catalyst_llm_calls`.
+
+Net effect: on a box without live NSE/Yahoo index access, the catalyst pipeline still runs its
+full 18:00–19:00 schedule, logs `degraded` runs, scores the funnel off the factor store
+(Layer 1 = neutral-ish market, Layer 2 = neutral sector, Layer 3 = real cross-sectional
+factor rank), and keeps the cost gate / risk / paper-trade engine fully exercised.
+
 ---
 
 *Phase 0 complete. `COMPLETION.md` (Quiver) read fully. Phase 0.5 gate passed (GO). Phase 2
