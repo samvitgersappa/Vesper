@@ -263,8 +263,16 @@ async def run_eod(strategy_ids: list[str] | None = None) -> dict[str, Any]:
 
     Sells first (realizing cash), then buys within available cash. Updates
     holdings + account cash + NAV history atomically, publishes events.
+
+    The Catalyst Swing Trader (`catalyst_swing`) is intentionally excluded from
+    the default run: it trades on its own schedule (catalyst_risk 18:50 /
+    catalyst_paper_trade 19:00 IST) with its own exit/entry engine — the EOD
+    routine here only manages the 5 classic factor/ETF traders.
     """
-    ids = strategy_ids or [s["trader_id"] for s in __import__("backend.modules.finance.logic", fromlist=["STRATEGIES"]).STRATEGIES]
+    ids = strategy_ids or [
+        s["trader_id"] for s in __import__("backend.modules.finance.logic", fromlist=["STRATEGIES"]).STRATEGIES
+        if s["trader_id"] != "catalyst_swing"
+    ]
     today = _today()
     prices = build_price_map()
     if not prices:

@@ -24,9 +24,10 @@ from backend.modules.db import session_factory
 
 _MAX_LIMIT = 500
 
-# Paper-trader roster metadata (plan.md §1.5 — the 5 live traders). The DB only
-# stores `trader_id`; names/descriptions live here so the web app can render a
-# Quiver-style strategy switcher without a metadata table.
+# Paper-trader roster metadata (plan.md §1.5 — the 5 classic EOD traders plus
+# the Part E Catalyst Swing Trader). The DB only stores `trader_id`;
+# names/descriptions live here so the web app can render a Quiver-style
+# strategy switcher without a metadata table.
 STRATEGIES = [
     {
         "trader_id": "alpha_tilt",
@@ -62,6 +63,13 @@ STRATEGIES = [
         "short": "Alpha Gen",
         "type": "momentum_alpha",
         "description": "Top-20 momentum alpha candidates.",
+    },
+    {
+        "trader_id": "catalyst_swing",
+        "name": "Catalyst Swing Trader",
+        "short": "Catalyst",
+        "type": "catalyst_swing",
+        "description": "Momentum/catalyst swing positions — NSE delivery, FII/DII, PCR, breadth + LLM catalyst funnel (18:00–19:00 IST).",
     },
 ]
 
