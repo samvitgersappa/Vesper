@@ -150,6 +150,13 @@ async def _exit_position(db, pos: dict, reason: str, date: str, prices: dict[str
         text("UPDATE finance.catalyst_positions SET status='closed', exit_reason=:r, exit_date=:d WHERE id=:id"),
         {"r": reason, "d": date, "id": pos["id"]},
     )
+    await db.execute(
+        text(
+            "UPDATE finance.paper_account SET available_cash = available_cash + :proceeds "
+            "WHERE trader_id = :t"
+        ),
+        {"proceeds": _q(fill * qty), "t": TRADER_ID},
+    )
     return {"symbol": symbol, "side": "SELL", "qty": qty, "fill_price": _q(fill), "realized_pnl": _q(realized)}
 
 
@@ -210,12 +217,21 @@ async def _check_exits(date: str, prices: dict[str, float]) -> tuple[list[dict],
             else:
                 kept.append(pos)
 
+        await db.commit()
+
     return exits, kept
 
 
 # ── Entries ──────────────────────────────────────────────────────────────
 async def _funnel_candidates(date: str) -> list[dict]:
-    """Positive-catalyst candidates sorted by composite score."""
+    """Candidates for entry, sorted by composite score.
+
+    Preferred signal: the LLM stage's `positive` catalysts. When the LLM stage
+    produced none (degraded run, no API key, or genuinely no concrete catalyst
+    today), fall back to the top factor-composite candidates from the screen so
+    the swing trader isn't perpetually flat — entries still pass the cost gate,
+    position limits (5–8 concurrent) and the per-day entry cap.
+    """
     async with session_factory()() as db:
         rows = (await db.execute(
             text(
@@ -226,6 +242,16 @@ async def _funnel_candidates(date: str) -> list[dict]:
             ),
             {"d": date, "n": WATCHLIST_SIZE * 2},
         )).all()
+        if not rows:
+            rows = (await db.execute(
+                text(
+                    "SELECT symbol, market_score, sector_score, stock_score, composite_score, rank, "
+                    "catalyst_signal, catalyst_json "
+                    "FROM finance.catalyst_scores WHERE date = :d "
+                    "ORDER BY composite_score DESC LIMIT :n"
+                ),
+                {"d": date, "n": WATCHLIST_SIZE * 2},
+            )).all()
     return [dict(r._mapping) for r in rows]
 
 
@@ -311,8 +337,8 @@ async def _enter(
     await db.execute(
         text(
             "INSERT INTO finance.catalyst_positions "
-            "(id, symbol, entry_date, entry_price, qty, atr, stop_loss, trailing_stop, target, days_held) "
-            "VALUES (:id, :s, :d, :ep, :q, :atr, :stop, :trail, :tgt, 0)"
+            "(id, symbol, entry_date, entry_price, qty, atr, stop_loss, trailing_stop, target, days_held, status) "
+            "VALUES (:id, :s, :d, :ep, :q, :atr, :stop, :trail, :tgt, 0, 'open')"
         ),
         {
             "id": str(uuid.uuid4()), "s": symbol, "d": date, "ep": _q(price), "q": qty,

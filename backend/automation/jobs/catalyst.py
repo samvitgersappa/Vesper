@@ -1,4 +1,4 @@
-"""Catalyst Swing Trader jobs (Part E) — data acquisition → screen → LLM → trade.
+"""Catalyst Swing Trader jobs (Part E) — data acquisition → screen → news → LLM → trade.
 
 Schedules (IST, plan §12 / Trader 6 guide):
   18:00 fetch_catalyst_bhavcopy    NSE bhavcopy delivery → delivery_stats
@@ -7,6 +7,7 @@ Schedules (IST, plan §12 / Trader 6 guide):
   18:10 fetch_sector_indices       yfinance sector indices → sector_scores_daily
   18:15 compute_market_breadth     breadth from equity_daily → market_breadth_daily
   18:20 catalyst_screen            Layer 1/2/3 scores + watchlist funnel
+  18:30 catalyst_news              per-stock news capture → catalyst_news
   18:40 catalyst_llm               DeepSeek V4 Flash catalyst analysis (capped)
   18:50 catalyst_risk              exits-only risk pass (stops/trailing/time/rank)
   19:00 catalyst_paper_trade       entries + NAV
@@ -18,7 +19,7 @@ the `catalyst_swing` paper account once at worker startup.
 
 import logging
 
-from backend.modules.finance.catalyst import llm, scores, sources, trader
+from backend.modules.finance.catalyst import llm, news, scores, sources, trader
 
 logger = logging.getLogger("vesper.automation.catalyst")
 
@@ -29,6 +30,7 @@ ALL_JOBS = {
     "fetch_sector_indices": sources.fetch_sector_indices,
     "compute_market_breadth": sources.compute_breadth,
     "catalyst_screen": scores.screen,
+    "catalyst_news": news.run_news,
     "catalyst_risk": trader.run_risk,
     "catalyst_paper_trade": trader.run_day,
 }

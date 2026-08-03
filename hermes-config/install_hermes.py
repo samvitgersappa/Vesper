@@ -1,0 +1,224 @@
+"""Provision Hermes Agent for Vesper on a fresh machine.
+
+Called by start.sh (§Hermes). On a brand-new VM this is the whole
+"Hermes up and running" step. It:
+
+1. Writes `~/.hermes/.env` with the secrets start.sh collected
+   (OPENCODE_GO_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS, …).
+2. Merges `hermes-config/hermes.config.template.yaml` into
+   `~/.hermes/config.yaml` (repo paths resolved to this checkout), preserving
+   any keys Hermes itself manages (auth, pairing, session, etc.).
+3. Runs `sync_mcp.py` to (re)register the 8 Vesper module MCP servers.
+4. Installs the vesper-capture-router plugin into `~/.hermes/plugins/`.
+5. Registers the reasoning cron jobs (Morning Brief, Daily Journal
+   Questionnaire, Reviews, Knowledge Architect) with `hermes cron create`
+   if they are not already present.
+6. Ensures the skills/cron external_dirs point at this checkout.
+
+Idempotent and safe to re-run.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+REPO = Path(__file__).resolve().parent.parent
+TEMPLATE = REPO / "hermes-config" / "hermes.config.template.yaml"
+MCP_TEMPLATE = REPO / "hermes-config" / "mcp_servers.json"
+SYNC_MCP = REPO / "hermes-config" / "sync_mcp.py"
+PLUGIN_SRC = REPO / "hermes-config" / "plugins" / "vesper-capture-router"
+CRON_SKILLS_DIR = REPO / "hermes-config" / "cron"
+SKILLS_DIR = REPO / "hermes-config" / "skills"
+
+HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+CONFIG = HERMES_HOME / "config.yaml"
+HERMES_ENV = HERMES_HOME / ".env"
+PLUGIN_DST = HERMES_HOME / "plugins" / "vesper-capture-router"
+
+# Reasoning jobs that must run through Hermes Agent (plan.md §12): each maps
+# to a skill under hermes-config/cron/<name>/SKILL.md and an IST cron expr.
+CRON_JOBS = [
+    # (name, schedule, skill, deliver)
+    ("vesper-morning-brief", "30 7 * * 1-5", "morning-brief", "telegram"),
+    ("vesper-daily-journal-questionnaire", "30 21 * * *", "daily-journal-questionnaire", "telegram"),
+    ("vesper-evening-review", "45 21 * * 1-5", "evening-review", "telegram"),
+    ("vesper-weekly-review", "0 10 * * 0", "weekly-review", "telegram"),
+    ("vesper-monthly-review", "0 10 1 * *", "monthly-review", "telegram"),
+    ("vesper-knowledge-architect", "30 2 * * *", "knowledge-architect", "telegram"),
+]
+
+
+def log(msg: str) -> None:
+    print(f"[hermes-provision] {msg}")
+
+
+def log_warn(msg: str) -> None:
+    print(f"[hermes-provision] WARN: {msg}")
+
+
+# ── 1. Secrets into ~/.hermes/.env ─────────────────────────────────────
+def write_hermes_env(env_path: Path) -> None:
+    """Copy the project .env values Hermes cares about into ~/.hermes/.env."""
+    project_env = REPO / ".env"
+    if not project_env.exists():
+        log_warn(".env missing — no secrets to mirror")
+        return
+    project = {}
+    for line in project_env.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        project[k.strip()] = v.strip()
+
+    # Keys Hermes reads at runtime (gateway / provider / memory).
+    wanted = [
+        "OPENCODE_GO_API_KEY", "GROQ_API_KEY",
+        "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS", "TELEGRAM_HOME_CHANNEL",
+        "OPENAI_API_KEY",
+    ]
+    lines = []
+    if env_path.exists():
+        seen = set()
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if line and not line.startswith("#") and "=" in line:
+                k = line.split("=", 1)[0].strip()
+                seen.add(k)
+                # keep existing values unless the project has a non-empty one
+                if k in wanted and project.get(k):
+                    continue  # replaced below
+            lines.append(line)
+    else:
+        seen = set()
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for k in wanted:
+        if project.get(k) and k not in seen:
+            lines.append(f"{k}={project[k]}")
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log(f"secrets mirrored into {env_path}")
+
+
+# ── 2. Config template → ~/.hermes/config.yaml ─────────────────────────
+def merge_config(template: Path, target: Path) -> None:
+    """Merge the Vesper template into the Hermes config (template wins on
+    conflicts, but keys Hermes manages on its own are preserved)."""
+    raw = template.read_text(encoding="utf-8")
+    raw = raw.replace("REPO_ROOT", str(REPO)).replace("VENV_PYTHON", str(REPO / ".venv" / "bin" / "python"))
+    tpl = yaml.safe_load(raw) or {}
+
+    if target.exists():
+        cfg = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+    else:
+        cfg = {}
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+    def _merge(dst: dict, src: dict) -> None:
+        for k, v in src.items():
+            if isinstance(v, dict) and isinstance(dst.get(k), dict):
+                _merge(dst[k], v)
+            else:
+                dst[k] = v
+
+    _merge(cfg, tpl)
+    tmp = target.with_suffix(".yaml.tmp")
+    tmp.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False), encoding="utf-8")
+    shutil.move(str(tmp), str(target))
+    log(f"config.yaml merged from template ({target})")
+
+
+# ── 3. MCP servers ─────────────────────────────────────────────────────
+def sync_mcp() -> None:
+    if not HERMES_HOME.is_dir():
+        log_warn("hermes home missing — MCP sync skipped")
+        return
+    result = subprocess.run(
+        [sys.executable, str(SYNC_MCP), str(CONFIG)],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        log(result.stdout.strip() or "MCP servers synced")
+    else:
+        log_warn(f"MCP sync failed: {result.stderr.strip()[:300]}")
+
+
+# ── 4. Capture-router plugin ───────────────────────────────────────────
+def install_plugin() -> None:
+    if not PLUGIN_SRC.is_dir():
+        log_warn("capture-router plugin source missing in repo")
+        return
+    PLUGIN_DST.parent.mkdir(parents=True, exist_ok=True)
+    if PLUGIN_DST.exists():
+        shutil.rmtree(PLUGIN_DST)
+    shutil.copytree(PLUGIN_SRC, PLUGIN_DST)
+    log(f"capture-router plugin installed → {PLUGIN_DST}")
+
+    # Ensure it's enabled in config.yaml plugins.enabled
+    if CONFIG.exists():
+        cfg = yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
+        enabled = cfg.setdefault("plugins", {}).setdefault("enabled", [])
+        if "vesper-capture-router" not in enabled:
+            enabled.append("vesper-capture-router")
+            CONFIG.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False), encoding="utf-8")
+            log("vesper-capture-router enabled in plugins.enabled")
+
+
+# ── 5. Cron jobs ───────────────────────────────────────────────────────
+def register_cron() -> None:
+    """Register reasoning cron jobs if not already present."""
+    try:
+        existing = subprocess.run(
+            ["hermes", "cron", "list"], capture_output=True, text=True, timeout=60,
+        ).stdout
+    except Exception:
+        log_warn("`hermes cron list` failed — skipping cron registration (run start.sh again later)")
+        return
+
+    for name, schedule, skill, deliver in CRON_JOBS:
+        if name in existing:
+            log(f"cron job {name} already present")
+            continue
+        prompt = (
+            f"You are Vesper's scheduled '{skill}' job. Load the "
+            f"skill_view(name='{skill}') skill from the Vesper cron skills dir "
+            f"and execute its instructions for today, fully autonomously. "
+            f"Write any outputs through the Vesper MCP servers."
+        )
+        cmd = [
+            "hermes", "cron", "create",
+            schedule,
+            prompt,
+            "--name", name,
+            "--deliver", deliver,
+            "--skill", skill,
+            "--workdir", str(REPO),
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode == 0:
+                log(f"cron job {name} registered ({schedule} → {deliver})")
+            else:
+                log_warn(f"cron job {name} failed: {result.stderr.strip()[:300]}")
+        except Exception as exc:
+            log_warn(f"cron job {name} raised: {exc}")
+
+
+def main() -> int:
+    write_hermes_env(HERMES_ENV)
+    merge_config(TEMPLATE, CONFIG)
+    sync_mcp()
+    install_plugin()
+    register_cron()
+    log("done")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

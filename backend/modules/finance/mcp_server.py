@@ -81,6 +81,12 @@ async def catalyst_cost_gate(date: str = "", limit: int = 50) -> dict:
     return await _catalyst.cost_gate(date or None, limit)
 
 
+@mcp.tool()
+async def catalyst_news(date: str = "", limit: int = 100) -> dict:
+    """Stored per-stock news for the catalyst funnel. Read-only."""
+    return await _catalyst.news(date or None, limit)
+
+
 def main() -> None:
     mcp.run()
 

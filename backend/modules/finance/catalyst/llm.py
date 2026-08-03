@@ -104,6 +104,23 @@ def _parse_verdict(text: str) -> Optional[dict]:
     return None
 
 
+async def _recent_news(symbol: str, limit: int = 5) -> list[str]:
+    """Headline text for `symbol` from the persisted catalyst_news table."""
+    try:
+        from backend.modules.finance.catalyst.news import news_for_symbol
+
+        date = ist_today()
+        items = await news_for_symbol(date, symbol, limit=limit)
+        out = []
+        for it in items:
+            title = (it.get("title") or "").strip()
+            source = (it.get("source") or "").strip()
+            out.append(f"{title} ({source})" if source and title else (title or source))
+        return out
+    except Exception:  # noqa: BLE001 - news is never required for a verdict
+        return []
+
+
 async def classify_catalyst(symbol: str, context: dict) -> dict[str, Any]:
     """Ask DeepSeek V4 Flash for a structured catalyst verdict for `symbol`.
 
@@ -124,8 +141,11 @@ async def classify_catalyst(symbol: str, context: dict) -> dict[str, Any]:
     prompt = (
         f"Stock: {symbol}\n"
         f"Context: {json.dumps(context)}\n"
-        "Assess the swing-trade catalyst."
     )
+    news = await _recent_news(symbol)
+    if news:
+        prompt += "Recent news headlines:\n" + "\n".join(f"- {n}" for n in news) + "\n"
+    prompt += "Assess the swing-trade catalyst."
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(

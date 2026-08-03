@@ -35,9 +35,9 @@ host: Hermes Agent, the Vesper API, the worker scheduler, and the data stores.
         User (Telegram / web dashboard)
                  │
         ┌────────┴─────────┐
-   Hermes Agent       Caddy (:80/:443) ──▶ frontend/out (static)
+   Hermes Agent       Caddy (:80) ──▶ frontend/out (static export)
    (Telegram gateway)          │
-        │                      └──▶ vesper-api (:8000, FastAPI)
+        │                      └──▶ vesper-api (:8000, FastAPI, host process)
         │  MCP (stdin/stdout)          │
         └──▶ 8 module MCP servers ◀────┘
                           │
@@ -46,19 +46,28 @@ host: Hermes Agent, the Vesper API, the worker scheduler, and the data stores.
    Postgres (:5432)   Redis (:6379)    DuckDB + LanceDB (files)
    (system of record) (event bus)      (feature store / semantic index)
                           │
-                    vesper-worker (APScheduler: finance, vault push,
+                    vesper-worker (host APScheduler: finance, vault push,
                                    knowledge, graph, notifications…)
 ```
 
-- **Hermes Agent** runs as its own process (its own installer), outside Docker,
+- **Hermes Agent** runs as its own process (its own installer), on the host,
   and talks to the module MCP servers over local stdio. It does **not** run
   inside compose.
-- **vesper-api** and **vesper-worker** run as Docker containers.
-- **Caddy** serves the static frontend and can terminate TLS for the dashboard.
+- **vesper-api** and **vesper-worker** run as **host processes** (`.venv/bin/python -m backend.main`),
+  launched and supervised by `start.sh` — fewer moving parts on an 8GB VM than
+  building two Docker images.
+- **Caddy** runs on the host, serves the static frontend on :80, and proxies
+  `/api` + `/health` to the API.
+- **postgres** and **redis** run as Docker containers; the **quartz** garden
+  also runs in Docker.
 
 ---
 
 ## 2. Prerequisites
+
+> `start.sh` installs all of these automatically on Ubuntu/macOS (apt/brew,
+> Docker Engine, Compose plugin, Caddy, Hermes Agent). The sections below are
+> the manual equivalent for reference / unusual setups.
 
 - **OS**: Ubuntu 22.04+/24.04 (recommended), Debian 12, macOS 13+, or any
   Linux with Docker.
@@ -66,6 +75,7 @@ host: Hermes Agent, the Vesper API, the worker scheduler, and the data stores.
 - **Node.js 18+** (frontend build; can be installed temporarily).
 - **Python 3.12+** (local venv for the Hermes MCP servers).
 - **Git**.
+- **Caddy** (web server / reverse proxy; apt on Ubuntu, brew on macOS).
 - **Hermes Agent** installed per its own installer (needed for the cognitive
   engine and Telegram gateway). If you skip it, the data layer, API, worker,
   and web dashboard still run — you just lose the agent front-end.
@@ -144,38 +154,44 @@ cd vesper
 `start.sh` is **idempotent** and safe to re-run (it doubles as the update/repair
 path). It will:
 
-1. Check Docker + Compose.
-2. On first run, copy `.env.example` → `.env` and prompt for:
+1. Install the toolchain (apt on Ubuntu: git, python3-venv, node/npm, openssl,
+   Docker + Compose, Caddy; Homebrew on macOS).
+2. Install Hermes Agent via its official installer (if missing).
+3. Build the frontend static export into `frontend/out/`.
+4. On first run, copy `.env.example` → `.env` and prompt for:
    - OpenCode Go API key
    - Telegram bot token + your numeric Telegram user ID
-   - (optional) GitHub PAT + vault repo URL for the §7 backup
-   It then generates `POSTGRES_PASSWORD` / `JWT_SECRET` and writes `.env`.
-   - `OPENCODE_GO_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` and
-     the backup creds are **empty by default**; leave them blank to run the
-     stack without them (services degrade gracefully).
-3. Build the frontend (npm) into `frontend/out/`.
-4. Start `postgres`, `redis`, `caddy`.
-5. Run `alembic upgrade head` → creates **56 tables across 7 schemas**, all
+   It then generates `POSTGRES_PASSWORD` / `JWT_SECRET`.
+5. Create the second-brain vault folder structure fresh
+   (`~/Documents/KnowledgeVault`: `00 Journal/YYYY`, `03 Knowledge`,
+   `99 Assets/images`, `01 Inbox`, `02 Projects`, `index.md`) and git-init it.
+6. Start `postgres` + `redis` (Docker); on first run wipe the DB to empty,
+   then `alembic upgrade head` → creates **56 tables across 7 schemas**, all
    empty.
-6. Initialise the DuckDB feature store (5 tables, empty).
-7. Build + start `vesper-api` and `vesper-worker`.
-8. If Hermes Agent is present, sync the 8 Vesper MCP servers into
-   `~/.hermes/config.yaml`.
-9. Print stack status and handoff URLs.
+7. Initialise the DuckDB feature store (5 tables, empty) and seed the **6
+   paper-trader accounts** (5 classic @ ₹5L + catalyst_swing @ ₹10L).
+8. Provision Hermes Agent: write `~/.hermes/.env`, merge `~/.hermes/config.yaml`
+   (provider + approvals + skills/cron external dirs), sync the 8 Vesper MCP
+   servers, install the capture-router plugin, register the 6 reasoning cron
+   jobs.
+9. Start the API (:8000) + worker as host processes.
+10. Start the Quartz garden (Docker) + Caddy on :80 (static frontend + `/api`
+    proxy + `/brain`) — open to the internet so your phone can reach it.
+11. Start the Hermes Telegram gateway.
+12. Print stack status and handoff URLs.
 
 ### What you should see
 
 ```text
-[vesper] Vesper stack is up. Checking health…
-NAME              STATUS
-postgres          Up
-redis             Up
-caddy             Up
-vesper-api        Up
-vesper-worker     Up
+[vesper] Step 13 — health checks.
+[vesper]   API /health → {"status":"ok","app_mode":"api"}
+  finance strategies → 6 | alpha_tilt,arjun_etf,lowdd_multi_asset,momentum_surge,alpha_generators,catalyst_swing
+[vesper]   web app up on :80
 Setup complete.
-  API health:  http://localhost:8000/health   → {"status":"ok"}
-  Web app:     http://localhost/
+  API health:   http://localhost:8000/health
+  Web app:      http://localhost:80/   (internet: http://<server-ip>/)
+  Brain garden: http://localhost:8081/
+  Telegram:     message your bot to talk to Hermes Agent.
 ```
 
 ### Verify end-to-end
@@ -201,6 +217,9 @@ script that points it at the eight module MCP servers using **host paths**
 
 ### 5.1 Sync MCP servers
 
+`start.sh` runs `hermes-config/install_hermes.py` which does all of this. To do
+it manually:
+
 ```bash
 cd /opt/vesper/vesper
 python3 -m venv .venv
@@ -213,25 +232,44 @@ The script is idempotent and preserves any MCP servers you already had.
 
 ### 5.2 Skills + cron
 
-Hermes Agent reads skills from `skills.external_dirs`. Vesper's config already
-points at:
+`install_hermes.py` merges `hermes-config/hermes.config.template.yaml` into
+`~/.hermes/config.yaml`, which points `skills.external_dirs` at:
 
 ```
 /opt/vesper/vesper/hermes-config/skills
 /opt/vesper/vesper/hermes-config/cron
 ```
 
-The cron skills (Morning Brief, Daily Journal Questionnaire at 21:30 IST,
-Evening/Weekly/Monthly Review, Knowledge Architect) are picked up from there.
-Verify with `hermes cron list` (or the equivalent command in your Hermes build).
+It also registers the reasoning cron jobs with `hermes cron create`:
+
+| Job | Schedule (IST) | Skill |
+|---|---|---|
+| Morning Brief | 07:30 Mon–Fri | `morning-brief` |
+| Daily Journal Questionnaire | 21:30 daily | `daily-journal-questionnaire` |
+| Evening Review | 21:45 Mon–Fri | `evening-review` |
+| Weekly Review | 10:00 Sun | `weekly-review` |
+| Monthly Review | 10:00 1st | `monthly-review` |
+| Knowledge Architect | 02:30 daily | `knowledge-architect` |
+
+Verify with `hermes cron list`.
 
 ### 5.3 Telegram gateway
 
-Follow Hermes Agent's docs to attach the Telegram gateway (bot token from
-`.env`). Notifications from Vesper itself are sent by `vesper-worker` directly
-via the Bot API (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_USERS`).
+The Telegram gateway is **enabled automatically** when `TELEGRAM_BOT_TOKEN` is
+present in `~/.hermes/.env` (which `install_hermes.py` mirrors from the project
+`.env`). `TELEGRAM_ALLOWED_USERS` is the allowlist — the bot only replies to
+your numeric Telegram user ID. `start.sh` starts the gateway with
+`hermes gateway run`. Notifications from Vesper itself are sent by the worker
+directly via the Bot API (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_USERS`).
 
-### 5.4 Memory plugin
+### 5.4 Capture-router plugin
+
+`install_hermes.py` installs `hermes-config/plugins/vesper-capture-router` into
+`~/.hermes/plugins/` and enables it. This is the deterministic backstop that
+guarantees any "remember X / save this / I spent ₹Y" utterance reaches
+`knowledge.capture` even if the model never loads the capture skill (addendum §1).
+
+### 5.5 Memory plugin
 
 Apply `hermes-config/memory/tencentdb-agent-memory.yaml` per the TencentDB
 Agent Memory plugin's documented Hermes Agent install path (L0–L3 memory).
@@ -314,26 +352,51 @@ host.
 
 ### 8.1 Docker containers always-on
 
-Compose sets `restart: unless-stopped` for postgres, redis, caddy, vesper-api.
-`vesper-worker` is `restart: "no"` **by design** (transient, isolated — a burst
-of jobs must not inflate steady-state RAM, plan §15). Run it under a supervisor
-that restarts it:
+Compose sets `restart: unless-stopped` for postgres, redis, caddy (if used).
+The **API and worker run as host processes** launched by `start.sh`
+(`.venv/bin/python -m backend.main` with `APP_MODE=api` / `APP_MODE=worker`).
+For a long-running VM, supervise them so they survive reboots and crashes:
 
-### 8.2 systemd unit for the worker (Linux)
+### 8.2 systemd unit for the worker + API (Linux)
 
-`/etc/systemd/system/vesper-worker.service`:
+`/etc/systemd/system/vesper-api.service`:
 
 ```ini
 [Unit]
-Description=Vesper worker (APScheduler)
+Description=Vesper API
 After=docker.service network-online.target
 Wants=network-online.target
 
 [Service]
 User=vesper
 WorkingDirectory=/opt/vesper/vesper
-ExecStart=/usr/bin/docker compose up --no-deps -d --build vesper-worker
-ExecStop=/usr/bin/docker compose stop vesper-worker
+Environment=APP_MODE=api
+Environment=PORT=8000
+EnvironmentFile=/opt/vesper/vesper/.env
+ExecStart=/opt/vesper/vesper/.venv/bin/python -m backend.main
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/systemd/system/vesper-worker.service`:
+
+```ini
+[Unit]
+Description=Vesper worker (APScheduler + event subscribers)
+After=vesper-api.service network-online.target
+Wants=network-online.target
+
+[Service]
+User=vesper
+WorkingDirectory=/opt/vesper/vesper
+Environment=APP_MODE=worker
+Environment=PORT=9000
+Environment=VESPER_NULL_POOL=1
+EnvironmentFile=/opt/vesper/vesper/.env
+ExecStart=/opt/vesper/vesper/.venv/bin/python -m backend.main
 Restart=always
 RestartSec=30
 
@@ -341,11 +404,11 @@ RestartSec=30
 WantedBy=multi-user.target
 ```
 
-Enable:
+Enable both:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now vesper-worker
+sudo systemctl enable --now vesper-api vesper-worker
 ```
 
 ### 8.3 systemd unit for Hermes Agent
@@ -362,10 +425,10 @@ Wants=network-online.target
 [Service]
 User=vesper
 WorkingDirectory=/opt/vesper/vesper
-ExecStart=/home/vesper/.hermes/hermes-agent/venv/bin/python -m hermes gateway
+EnvironmentFile=/opt/vesper/vesper/.env
+ExecStart=/home/vesper/.hermes/hermes-agent/venv/bin/hermes gateway run
 Restart=always
 RestartSec=10
-EnvironmentFile=/opt/vesper/vesper/.env
 
 [Install]
 WantedBy=multi-user.target
@@ -377,6 +440,7 @@ WantedBy=multi-user.target
 ### 8.4 All services on boot
 
 ```bash
+sudo systemctl enable --now vesper-api
 sudo systemctl enable --now vesper-worker
 sudo systemctl enable --now hermes
 # Docker containers are already restart:unless-stopped
@@ -459,12 +523,16 @@ docker compose exec -T postgres psql -U vesper -d postgres \
 ### 10.2 Logs
 
 ```bash
-docker compose logs -f vesper-api       # API + migrations
-docker compose logs -f vesper-worker    # scheduler jobs + events
-docker compose logs -f caddy            # web proxy
-journalctl -u vesper-worker -f          # systemd worker
-journalctl -u hermes -f                 # Hermes Agent
-tail -f ~/.hermes/logs/agent.log        # Hermes agent log (its own path)
+docker compose logs -f postgres       # Postgres
+docker compose logs -f redis          # Redis
+tail -f /tmp/vesper-api.log           # API (host process)
+tail -f /tmp/vesper-worker.log        # worker: scheduler jobs + events
+tail -f /tmp/vesper-caddy.log         # Caddy web proxy
+tail -f /tmp/vesper-gateway.log       # Hermes gateway
+journalctl -u vesper-api -f           # systemd API (if supervised)
+journalctl -u vesper-worker -f        # systemd worker (if supervised)
+journalctl -u hermes -f               # Hermes Agent (if supervised)
+tail -f ~/.hermes/logs/agent.log      # Hermes agent log (its own path)
 ```
 
 ### 10.3 Job run table
@@ -499,10 +567,10 @@ fi
    auth by default, so do not expose it.
 3. **`.env` is git-ignored** — never commit it. Rotate the key/token if it
    leaks.
-4. Put a reverse proxy (Caddy/nginx) in front of `vesper-api` and the dashboard
-   with TLS if serving over the internet. Caddy already terminates TLS for
-   `:443` in compose — configure your domain in `Caddyfile` or as Caddy config.
-5. Telegram bot token lives in `.env`; `sync_mcp.py`/`start.sh` never print it.
+4. Caddy serves :80 (and can do TLS on :443 with a domain via `VESPER_DOMAIN`).
+   Put it (or nginx) in front of the API + dashboard and terminate TLS if
+   serving over the public internet.
+5. Telegram bot token lives in `.env`; `install_hermes.py`/`start.sh` never print it.
 6. The vault backup uses a **fine-grained PAT scoped to that one repo**.
 7. Ollama (if used) binds 127.0.0.1:11434 — do not expose.
 8. Keep Docker, Node, Python, and Hermes Agent updated.
@@ -521,27 +589,28 @@ git pull
 
 ### 12.2 Migrations
 
-`start.sh` runs `alembic upgrade head`. Manual:
+`start.sh` runs `alembic upgrade head`. Manual (host venv):
 
 ```bash
-docker compose run --rm -T vesper-api \
-  sh -c "alembic -c backend/db/postgres/alembic.ini upgrade head"
+cd /opt/vesper/vesper
+.venv/bin/python -m alembic -c backend/db/postgres/alembic.ini upgrade head
 ```
 
 ### 12.3 Rebuild frontend only
 
 ```bash
-cd frontend && npm run build && cd ..
-docker compose restart caddy
+cd frontend && NEXT_PUBLIC_API_BASE= npm run build && cd ..
+caddy reload --config /opt/vesper/vesper/.run/Caddyfile   # or restart caddy
 ```
 
 ### 12.4 Re-seed the finance feature store
 
 ```bash
-# Delete the DuckDB state (named volume data_backend) and let the 06:00 job
-# rebuild it, or run the jobs manually:
-docker compose run --rm -T vesper-api python -c \
-  "import asyncio; from backend.automation.jobs.finance import fetch_equity, compute_factors, fetch_macro, update_universe; \
+# Delete the DuckDB state (backend/data/metadata/quiver.duckdb) and let the
+# 06:00 job rebuild it, or run the jobs manually:
+cd /opt/vesper/vesper
+.venv/bin/python -c \
+  "import asyncio; from backend.automation.jobs.finance import update_universe; \
    asyncio.run(update_universe())"
 ```
 
@@ -591,18 +660,18 @@ Times are in the server's local timezone (IST on the reference deployment).
 
 ### Worker dies on boot
 
-- Check `docker compose logs vesper-worker`. Common cause: Redis down when the
+- Check `tail -f /tmp/vesper-worker.log`. Common cause: Redis down when the
   subscribers start — they retry; the scheduler still runs.
 
-### Frontend blank at `http://localhost/`
+### Frontend blank at `http://<server-ip>/`
 
-- `frontend/out/` missing → `cd frontend && npm run build`.
-- Caddy serving old copy → `docker compose restart caddy`.
+- `frontend/out/` missing → `cd frontend && NEXT_PUBLIC_API_BASE= npm run build`.
+- Caddy serving old copy → `caddy stop && caddy start` (or re-run `./start.sh`).
 
 ### Ports already in use
 
-- `postgres`, `redis`, `caddy`, `vesper-api` bind host ports 5432/6379/80/8000.
-  Change in `docker-compose.yml` if a conflict exists.
+- `postgres`, `redis`, `caddy`, the API bind host ports 5432/6379/80/8000.
+  Change in `docker-compose.yml` / the generated Caddyfile if a conflict exists.
 
 ---
 
@@ -614,19 +683,27 @@ Times are in the server's local timezone (IST on the reference deployment).
 |---|---|---|---|
 | 5432 | postgres | 127.0.0.1 | relational store |
 | 6379 | redis | 127.0.0.1 | event bus |
-| 80 / 443 | caddy | all | dashboard + TLS |
-| 8000 | vesper-api | (container) | REST API |
+| 80 | caddy (host) | all | web app + /api proxy + /brain (internet-facing) |
+| 8000 | vesper-api (host) | 0.0.0.0 | REST API |
+| 8081 | quartz garden | 127.0.0.1 | second-brain static site + /rebuild trigger |
 | 11434 | ollama (optional) | 127.0.0.1 | local fallback model |
 
-### Compose services
+### Host processes (supervised by start.sh / systemd)
+
+| Process | Role | Log |
+|---|---|---|
+| `backend.main` (APP_MODE=api) | REST + health on :8000 | `/tmp/vesper-api.log` |
+| `backend.main` (APP_MODE=worker) | scheduler + event subscribers | `/tmp/vesper-worker.log` |
+| `hermes gateway run` | Telegram gateway + agent loop | `/tmp/vesper-gateway.log` |
+| `caddy run` | :80 web + /api proxy + /brain | `/tmp/vesper-caddy.log` |
+
+### Docker containers
 
 | Service | Restart | Role |
 |---|---|---|
 | postgres | unless-stopped | data |
 | redis | unless-stopped | bus |
-| caddy | unless-stopped | web |
-| vesper-api | unless-stopped | REST + health |
-| vesper-worker | supervisor-managed | scheduler + event subscribers |
+| vesper-quartz | unless-stopped | garden (static site + rebuild trigger) |
 | ollama | profile `fallback` | on-demand local model |
 
 ### Environment cheat-sheet

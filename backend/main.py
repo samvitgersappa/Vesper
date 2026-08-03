@@ -44,6 +44,12 @@ async def health():
 
 def _run_worker() -> None:
     """Start the data scheduler + event subscribers (blocking)."""
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     from backend.automation.scheduler import run
 
     run()

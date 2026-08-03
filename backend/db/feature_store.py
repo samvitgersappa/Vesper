@@ -133,12 +133,12 @@ def write_equity(df: pd.DataFrame) -> int:
     sub["Date"] = pd.to_datetime(sub["Date"]).dt.date
     sub = sub.drop_duplicates(subset=["Date", "Symbol"], keep="last")
     ensure_schema()
-    conn = client.get_conn()
-    conn.register("_equity_upsert", sub)
-    conn.execute(
-        "DELETE FROM equity_daily WHERE Symbol IN (SELECT DISTINCT Symbol FROM _equity_upsert)"
-    )
-    conn.execute("INSERT INTO equity_daily SELECT * FROM _equity_upsert")
+    with client.session() as conn:
+        conn.register("_equity_upsert", sub)
+        conn.execute(
+            "DELETE FROM equity_daily WHERE Symbol IN (SELECT DISTINCT Symbol FROM _equity_upsert)"
+        )
+        conn.execute("INSERT INTO equity_daily SELECT * FROM _equity_upsert")
     return len(sub)
 
 
@@ -150,12 +150,12 @@ def write_macro(df: pd.DataFrame) -> int:
     sub["Date"] = pd.to_datetime(sub["Date"]).dt.date
     sub = sub.drop_duplicates(subset=["Date", "Series"], keep="last")
     ensure_schema()
-    conn = client.get_conn()
-    conn.register("_macro_upsert", sub)
-    conn.execute(
-        "DELETE FROM macro_series WHERE Series IN (SELECT DISTINCT Series FROM _macro_upsert)"
-    )
-    conn.execute("INSERT INTO macro_series SELECT * FROM _macro_upsert")
+    with client.session() as conn:
+        conn.register("_macro_upsert", sub)
+        conn.execute(
+            "DELETE FROM macro_series WHERE Series IN (SELECT DISTINCT Series FROM _macro_upsert)"
+        )
+        conn.execute("INSERT INTO macro_series SELECT * FROM _macro_upsert")
     return len(sub)
 
 
@@ -164,10 +164,10 @@ def write_factors(df: pd.DataFrame) -> int:
     if df is None or df.empty:
         return 0
     ensure_schema()
-    client.execute("DELETE FROM factor_features")
-    conn = client.get_conn()
-    conn.register("_factor_upsert", df)
-    conn.execute("INSERT INTO factor_features SELECT * FROM _factor_upsert")
+    with client.session() as conn:
+        conn.execute("DELETE FROM factor_features")
+        conn.register("_factor_upsert", df)
+        conn.execute("INSERT INTO factor_features SELECT * FROM _factor_upsert")
     return len(df)
 
 
@@ -176,10 +176,10 @@ def upsert_membership(symbols: list[str], index_name: str = "Nifty 500") -> int:
     ensure_schema()
     today = date.today()
     rows = [(s, index_name, today, None) for s in symbols]
-    client.execute("DELETE FROM index_membership WHERE index_name = $i", {"i": index_name})
-    conn = client.get_conn()
-    conn.register("_memb_upsert", pd.DataFrame(rows, columns=["symbol", "index_name", "effective_from", "effective_to"]))
-    conn.execute("INSERT INTO index_membership SELECT * FROM _memb_upsert")
+    with client.session() as conn:
+        conn.execute("DELETE FROM index_membership WHERE index_name = $i", {"i": index_name})
+        conn.register("_memb_upsert", pd.DataFrame(rows, columns=["symbol", "index_name", "effective_from", "effective_to"]))
+        conn.execute("INSERT INTO index_membership SELECT * FROM _memb_upsert")
     return len(rows)
 
 

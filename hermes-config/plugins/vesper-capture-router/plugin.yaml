@@ -1,0 +1,6 @@
+name: vesper-capture-router
+version: 0.1.0
+description: "Deterministic capture routing for the Vesper second brain. When a turn contains capture intent (remember/note/save/log/don't forget/expense/workout/reminder) and the agent did not route it through knowledge.capture (or a journal/expense/reminder sink tool), this plugin dispatches mcp__knowledge__capture itself. No model discretion required."
+author: "Vesper"
+hooks:
+  - post_llm_call

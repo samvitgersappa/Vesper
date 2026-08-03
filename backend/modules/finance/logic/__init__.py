@@ -287,4 +287,46 @@ async def nav(strategy: str = "", limit: int = 60) -> dict[str, Any]:
     for tid in by_trader:
         by_trader[tid].sort(key=lambda d: d["date"], reverse=True)
 
-    return {"nav": by_trader}
+    return {"nav": by_trader, "nifty": _nifty_series(sorted(_nav_dates(by_trader)))}
+
+
+def _nav_dates(by_trader: dict[str, list[dict]]) -> set[str]:
+    """Union of all trade dates present in the NAV history."""
+    out: set[str] = set()
+    for rows in by_trader.values():
+        for r in rows:
+            out.add(str(r["date"]))
+    return out
+
+
+def _nifty_series(dates: list[str]) -> list[dict[str, Any]]:
+    """NIFTY 50 cumulative-return overlay over the NAV window.
+
+    Reads the daily Nifty closes from the DuckDB feature store and anchors the
+    first in-window close at 0% so the overlay is directly comparable to the
+    per-trader cumulative-return curves plotted in the UI.
+    """
+    if not dates:
+        return []
+    try:
+        from backend.db.feature_store import client as _fs_client
+        import pandas as pd
+
+        df = _fs_client.df(
+            "SELECT Date, Close FROM macro_series WHERE Series = 'nifty50' ORDER BY Date"
+        )
+    except Exception:  # noqa: BLE001 - feature store read degrades to no overlay
+        return []
+    if df is None or df.empty:
+        return []
+    closes = {str(d): float(c) for d, c in zip(df["Date"].astype(str), df["Close"])}
+    base: float | None = None
+    out: list[dict[str, Any]] = []
+    for d in dates:
+        c = closes.get(d)
+        if c is None:
+            continue
+        if base is None:
+            base = c
+        out.append({"date": d, "close": c, "cumulative_pct": (c / base - 1) * 100})
+    return out

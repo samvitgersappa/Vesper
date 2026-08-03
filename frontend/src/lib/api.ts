@@ -1,5 +1,4 @@
-const BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "http://localhost:8123";
+const BASE = (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "");
 
 export async function api<T = unknown>(
   path: string,

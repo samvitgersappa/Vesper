@@ -118,7 +118,7 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 | `compute_factors` | 06:30 daily | Computes 7 factors per symbol into `factor_features` |
 | `fetch_macro` | 07:00 daily | Pulls 8 macro series (Nifty, VIX, USD/INR, crude, gold, …) |
 | `update_universe` | 07:30 daily | Refreshes `index_membership` from the bundled Nifty CSV |
-| `paper_trade_eod` | 17:00 Mon–Fri | End-of-day mark-to-market for all paper traders → `paper_nav_history` |
+| `paper_trade_eod` | 18:00 Mon–Fri | End-of-day mark-to-market for the 5 classic paper traders → `paper_nav_history` |
 | `knowledge_architect_pass` | 02:30 daily | Vault re-org / consolidation pass |
 | `graph_analytics_pass` | 03:00 daily | Community detection + relationship analytics → `graph_snapshots` |
 | `graph_projection_backfill` | 03:05 daily | Rebuilds `graph_nodes`/`edges` from the real source tables (also runs once at worker startup) |
@@ -178,20 +178,35 @@ The Finance server is strictly read-only; the worker/scheduler is the only write
 ./start.sh
 ```
 
-`start.sh` is idempotent and does all of the following:
+`start.sh` is the **single entrypoint for a fresh machine** (Ubuntu VM or
+macOS). It does literally everything:
 
-1. **Preflight** — checks Docker + Compose.
-2. **Secrets** — on first run, copies `.env.example` → `.env`, prompts for the
-   OpenCode Go API key, Telegram bot token + your user ID, and (optionally) the
-   vault-backup GitHub creds; generates `POSTGRES_PASSWORD` + `JWT_SECRET`.
+1. **Toolchain** — installs git, python3, node/npm, openssl, Docker + Compose,
+   and Caddy via `apt` (Ubuntu) or Homebrew (macOS).
+2. **Hermes Agent** — installs it via the official installer (`--skip-setup`).
 3. **Frontend** — builds the Next.js static export into `frontend/out`.
-4. **Data layer** — starts postgres, redis, caddy; runs `alembic upgrade head`;
-   initialises the DuckDB feature-store schema. Result: a **fully-initialised
-   but empty** database (45 Postgres tables + 5 DuckDB tables).
-5. **Module layer** — builds and starts `vesper-api` + `vesper-worker`.
-6. **Hermes config** — if Hermes Agent is installed, syncs the 8 Vesper MCP
-   servers into `~/.hermes/config.yaml` with host paths.
-7. **Health check** — prints stack status and handoff URLs.
+4. **Secrets** — on first run only, asks for the **OpenCode Go API key**, the
+   **Telegram bot token**, and your **numeric Telegram user ID** (the bot only
+   replies to you); generates `POSTGRES_PASSWORD` + `JWT_SECRET`.
+5. **Second-brain vault** — creates `~/Documents/KnowledgeVault` fresh
+   (`00 Journal/YYYY`, `03 Knowledge`, `99 Assets/images`, `01 Inbox`,
+   `02 Projects`, `index.md`) and git-inits it.
+6. **Data layer** — starts postgres + redis (Docker); on first run wipes the DB
+   to empty, then runs `alembic upgrade head` (56 tables across 7 schemas, all
+   empty), initialises the DuckDB feature store, and seeds the **6 paper-trader
+   accounts**.
+7. **Hermes provisioning** — writes `~/.hermes/.env`, merges `~/.hermes/config.yaml`
+   (provider + fallbacks, approvals, skills/cron external dirs), syncs the 8
+   module MCP servers, installs the capture-router plugin, and registers the 6
+   reasoning cron jobs (Morning Brief 07:30, Daily Journal Questionnaire 21:30,
+   Evening/Weekly/Monthly Review, Knowledge Architect 02:30).
+8. **Backend** — starts the API (:8000) and the data worker (all market jobs).
+9. **Web** — starts the Quartz garden and Caddy on :80 (static frontend + `/api`
+   proxy + `/brain`) — reachable from your phone at `http://<server-ip>/`.
+10. **Gateway** — starts the Hermes Telegram gateway.
+
+Idempotent: re-running skips what's already done. `--fresh` wipes the DB to a
+brand-new empty state and re-migrates.
 
 ### Manual alternative
 
@@ -203,21 +218,24 @@ docker compose up -d --build vesper-worker   # worker runs the scheduler
 
 ### Pointing Hermes Agent at this repo
 
+`start.sh` automates all of this via `hermes-config/install_hermes.py`. To do it
+manually:
+
 1. Install Hermes Agent with its standard installer (plan.md §0 / Phase 3).
-2. Set the default model: `hermes model` → `opencode-go` / `hy3`.
-3. Register the module MCP servers:
+2. Merge the Vesper config template + provider chain:
    ```bash
-   .venv/bin/python hermes-config/sync_mcp.py ~/.hermes/config.yaml
+   .venv/bin/python hermes-config/install_hermes.py   # config, MCP, plugin, cron
    ```
-4. Apply `hermes-config/provider.yaml` (fallback chain) and
+   or step-by-step: set `hermes model` → `opencode-go` / `hy3`, then
+   `.venv/bin/python hermes-config/sync_mcp.py ~/.hermes/config.yaml`.
+3. Apply `hermes-config/provider.yaml` (fallback chain) and
    `hermes-config/model_escalation.py` per plan §14.
-5. Install the TencentDB Agent Memory plugin per its documented path, using
-   `hermes-config/memory/tencentdb-agent-memory.yaml`.
-6. Configure the Telegram gateway, then drop `hermes-config/skills/*.skill`
-   into Hermes Agent's skills directory.
-7. Copy the cron skills (`hermes-config/cron/*`, incl.
-   `daily_journal_questionnaire` + `daily_journal_questions.yaml`) into Hermes
-   Agent's cron schedule (21:30 IST daily).
+4. `hermes-config/install_hermes.py` installs the `vesper-capture-router`
+   plugin (deterministic second-brain capture routing) and registers the 6
+   reasoning cron jobs.
+5. Configure the Telegram gateway with `TELEGRAM_BOT_TOKEN` +
+   `TELEGRAM_ALLOWED_USERS` in `~/.hermes/.env` (the gateway auto-enables
+   Telegram when the token is present), then `hermes gateway run`.
 
 Hermes Agent connects to `vesper/`'s module MCP servers over the local network /
 stdin-stdout — it never imports anything from this repo.
@@ -251,10 +269,13 @@ stdin-stdout — it never imports anything from this repo.
 VESPER_TESTING=1 .venv/bin/python -m pytest tests/   # needs the stack up
 ```
 
-13 integration tests cover relationship stats/search, journal streak +
+34 integration tests cover relationship stats/search, journal streak +
 `complete_day` round-trip, the 23:55 deadline job, the graph write adapter,
 LanceDB index + search, scheduler registration, the finance feature store +
-universe refresh, notification triage, the REST API, and the event catalog.
+universe refresh, notification triage, the REST API, the event catalog, and the
+catalyst swing trader. Tests that need the live market-data pipeline (the
+DuckDB feature store is empty on a fresh install until the 06:00–07:30 jobs run)
+skip cleanly rather than fail, mirroring the worker's honest degraded mode.
 
 ## Web dashboard
 

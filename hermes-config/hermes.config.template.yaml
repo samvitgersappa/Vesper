@@ -1,0 +1,102 @@
+# Vesper → Hermes Agent configuration template.
+#
+# Rendered by start.sh → hermes-config/install_hermes.py and merged into
+# ~/.hermes/config.yaml. REPO_ROOT / VENV_PYTHON placeholders are resolved to
+# this checkout. Hermes-managed keys (auth, pairing, session, onboarding) are
+# preserved by the merge — only the blocks below are imposed.
+#
+# Model routing (plan.md §14): OpenCode Go hy3 primary, gpt-5.6-luna for
+# long-context / finance·study analyze, local Ollama + Groq as fallbacks.
+
+model:
+  default: hy3
+  provider: opencode-go
+
+providers:
+  opencode-go:
+    name: OpenCode Go
+    default_model: hy3
+    base_url: https://opencode.ai/zen/go/v1
+    key_env: OPENCODE_GO_API_KEY
+
+fallback_providers:
+  - provider: opencode-go
+    model: gpt-5.6-luna
+  - provider: ollama
+    model: llama3.2
+    base_url: http://127.0.0.1:11434/v1
+  - provider: groq
+    model: llama-3.1-8b-instant
+    key_env: GROQ_API_KEY
+
+auxiliary:
+  vision:
+    provider: custom
+    model: kimi-k2.5
+    base_url: https://opencode.ai/zen/go/v1
+    api_key: ${OPENCODE_GO_API_KEY}
+
+toolsets:
+  - hermes-cli
+  - web
+
+agent:
+  max_turns: 12
+  default_personality: human
+  reasoning_effort: false
+  verbose: false
+
+terminal:
+  backend: local
+  cwd: .
+  timeout: 180
+
+compression:
+  enabled: true
+  threshold: 0.5
+  target_ratio: 0.2
+  protect_last_n: 20
+  protect_first_n: 3
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  flush_min_turns: 6
+  nudge_interval: 10
+
+delegation:
+  max_iterations: 50
+
+skills:
+  external_dirs:
+    - REPO_ROOT/hermes-config/skills
+    - REPO_ROOT/hermes-config/cron
+  creation_nudge_interval: 15
+
+approvals:
+  mode: manual
+  timeout: 60
+  cron_mode: deny
+  mcp_reload_confirm: true
+  destructive_slash_confirm: true
+
+command_allowlist:
+  - script execution via -e/-c flag
+
+code_execution:
+  max_tool_calls: 50
+  timeout: 300
+
+platform_toolsets:
+  telegram:
+    - hermes-telegram
+
+plugins:
+  enabled:
+    - vesper-capture-router
+  disabled: []
+  entries:
+    vesper-capture-router:
+      allow_tool_override: false

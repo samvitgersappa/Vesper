@@ -62,6 +62,7 @@ const TABS = [
   { id: "trades", label: "Trades" },
   { id: "signals", label: "Signals" },
   { id: "nav", label: "Performance" },
+  { id: "catalyst", label: "Catalyst" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -159,7 +160,7 @@ export default function Finance() {
     setRunning(true);
     setError("");
     try {
-      const base = (process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123").replace(/\/$/, "");
+      const base = (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "");
       const res = await fetch(`${base}/api/finance/run-eod`, {
         method: "POST",
         cache: "no-store",
@@ -372,6 +373,8 @@ export default function Finance() {
           ) : (
             traders.map((t) => <HoldingsGroup key={t.trader_id} trader={t} name={meta[t.trader_id]?.name ?? t.trader_id} color={colorFor(t.trader_id)} />)
           )}
+
+          {selected === "catalyst_swing" && <CatalystInsights />}
         </>
       )}
 
@@ -384,6 +387,8 @@ export default function Finance() {
       {tab === "signals" && (
         <SignalsTable rows={(data?.signals ?? []) as SignalRow[]} meta={meta} colorFor={colorFor} />
       )}
+
+      {tab === "catalyst" && <CatalystPanel />}
     </>
   );
 }
@@ -552,49 +557,107 @@ function SignalsTable({ rows, meta, colorFor }: { rows: SignalRow[]; meta: Recor
 }
 
 // ── Performance ────────────────────────────────────────────────────────
+type NavRow = { date: string; total_equity: number; cash?: number; holdings_value?: number; n_positions?: number; day_pnl_pct?: number | null; cumulative_pnl_pct?: number | null };
+
 function NavPanel({ nav }: { nav: AnyDict }) {
-  const series = useMemo(
+  const nifty = useMemo(() => (nav.nifty ?? []) as { date: string; cumulative_pct: number }[], [nav]);
+
+  const traderSeries = useMemo(() => {
+    return (Object.keys(nav).filter((k) => k !== "nifty") as string[])
+      .map((trader) => {
+        const rows = ((nav[trader] as NavRow[]) ?? []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        const first = Number(rows[0]?.total_equity);
+        if (!rows.length || !first) return null;
+        return {
+          trader,
+          rows: rows.map((r) => ({
+            d: String(r.date),
+            v: (Number(r.total_equity) / first - 1) * 100,
+            equity: Number(r.total_equity),
+          })),
+          last: rows[rows.length - 1],
+        };
+      })
+      .filter((s): s is NonNullable<typeof s> => s !== null && s.rows.length >= 1);
+  }, [nav]);
+
+  const axes = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of traderSeries) for (const r of s.rows) set.add(r.d);
+    for (const p of nifty) set.add(String(p.date));
+    return Array.from(set).sort();
+  }, [traderSeries, nifty]);
+
+  const aligned = useMemo(
     () =>
-      Object.entries(nav)
-        .map(([trader, rows]) => {
-          const sorted = (rows as AnyDict[]).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
-          const first = Number(sorted[0]?.total_equity);
-          if (!sorted.length || !first) return null;
-          return {
-            trader,
-            rows: sorted.map((r) => ({
-              d: String(r.date).slice(5),
-              v: (Number(r.total_equity) / first - 1) * 100,
-              equity: Number(r.total_equity),
-            })),
-            last: sorted[sorted.length - 1],
-          };
-        })
-        .filter((s): s is NonNullable<typeof s> => s !== null && s.rows.length >= 2),
-    [nav],
+      traderSeries.map((s) => {
+        const by = new Map(s.rows.map((r) => [r.d, r.v]));
+        return { trader: s.trader, last: s.last, pts: axes.map((d) => by.get(d) ?? null) };
+      }),
+    [traderSeries, axes],
   );
 
+  const niftyPts = useMemo(() => {
+    const by = new Map(nifty.map((p) => [String(p.date), Number(p.cumulative_pct)]));
+    return axes.map((d) => by.get(d) ?? null);
+  }, [nifty, axes]);
+
   const latest = Object.entries(nav)
+    .filter(([trader]) => trader !== "nifty")
     .map(([trader, rows]) => {
-      const sorted = (rows as AnyDict[]).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      const sorted = (rows as NavRow[]).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
       return { trader, row: sorted[sorted.length - 1] };
     })
     .filter((x) => x.row)
     .sort((a, b) => Number(b.row.total_equity) - Number(a.row.total_equity));
 
+  const combined: CurveSeries[] = [
+    ...aligned.map((s, i) => ({ label: s.trader, color: NAV_COLORS[i % NAV_COLORS.length], pts: s.pts })),
+    { label: "NIFTY 50", color: "#b8bec9", dashed: true, pts: niftyPts },
+  ];
+
   return (
     <>
       <div className="card" style={{ marginBottom: 16 }}>
-        <h2>NAV Performance · cumulative return</h2>
+        <h2>NAV Performance · cumulative return vs NIFTY</h2>
+        <p className="muted">Per-strategy equity growth since each book&apos;s first NAV snapshot, overlaid on the NIFTY 50 benchmark (dashed).</p>
         <div className="legend">
-          {series.map((s, i) => (
+          {aligned.map((s, i) => (
             <span key={s.trader}>
               <i style={{ background: NAV_COLORS[i % NAV_COLORS.length] }} />
               {s.trader}
             </span>
           ))}
+          <span>
+            <i style={{ background: "#b8bec9" }} />
+            NIFTY 50
+          </span>
         </div>
-        <NavChart series={series} />
+        <CurveChart axes={axes} series={combined} />
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h2>Per-Strategy · vs NIFTY</h2>
+        <p className="muted">One chart per strategy; NIFTY 50 benchmark drawn dashed on each.</p>
+        <div className="per-trader-grid">
+          {aligned.map((s, i) => (
+            <div key={s.trader} className="mini-chart">
+              <div className="mini-chart-head">
+                <span className="sym">{s.trader}</span>
+                <Pnl v={s.last.cumulative_pnl_pct} />
+              </div>
+              <CurveChart
+                axes={axes}
+                height={140}
+                series={[
+                  { label: s.trader, color: NAV_COLORS[i % NAV_COLORS.length], pts: s.pts },
+                  { label: "NIFTY 50", color: "#b8bec9", dashed: true, pts: niftyPts },
+                ]}
+              />
+            </div>
+          ))}
+          {aligned.length === 0 && <div className="muted">No NAV history yet.</div>}
+        </div>
       </div>
 
       <div className="card" style={{ overflowX: "auto" }}>
@@ -632,20 +695,20 @@ function NavPanel({ nav }: { nav: AnyDict }) {
   );
 }
 
-const NAV_COLORS = ["#3ddc97", "#4fd8e0", "#5b8cff", "#9d7bff", "#ff7a8a", "#f6c445"];
+const NAV_COLORS = ["#3ddc97", "#4fd8e0", "#5b8cff", "#9d7bff", "#ff7a8a", "#f6c445", "#ff9f43"];
 
-function NavChart({ series }: { series: { trader: string; rows: { d: string; v: number }[] }[] }) {
+type CurveSeries = { label: string; color: string; dashed?: boolean; pts: (number | null)[] };
+
+function CurveChart({ axes, series, height = 250 }: { axes: string[]; series: CurveSeries[]; height?: number }) {
   const W = 1100;
-  const H = 250;
-  const P = { l: 52, r: 20, t: 18, b: 28 };
-  const allV = series.flatMap((s) => s.rows.map((r) => r.v));
-  if (!allV.length) return <div className="muted">Not enough NAV history to plot.</div>;
-  const min = Math.min(...allV);
-  const max = Math.max(...allV);
+  const H = height;
+  const P = { l: 52, r: 150, t: 18, b: 28 };
+  const allV = series.flatMap((s) => s.pts.filter((v): v is number => v != null));
+  if (!allV.length || !axes.length) return <div className="muted">Not enough history to plot.</div>;
+  const min = Math.min(...allV, 0);
+  const max = Math.max(...allV, 0);
   const span = max - min || 1;
-  const maxLen = Math.max(...series.map((s) => s.rows.length));
-
-  const x = (i: number) => P.l + (i / Math.max(1, maxLen - 1)) * (W - P.l - P.r);
+  const x = (i: number) => P.l + (i / Math.max(1, axes.length - 1)) * (W - P.l - P.r);
   const y = (v: number) => P.t + (1 - (v - min) / span) * (H - P.t - P.b);
   const ticks = Array.from({ length: 5 }, (_, i) => min + (span * i) / 4);
 
@@ -660,20 +723,318 @@ function NavChart({ series }: { series: { trader: string; rows: { d: string; v: 
         </g>
       ))}
       <line x1={P.l} x2={W - P.r} y1={y(0)} y2={y(0)} stroke="var(--border-strong)" strokeWidth={1} />
-      {series.map((s, si) => {
-        const color = NAV_COLORS[si % NAV_COLORS.length];
-        const pts = s.rows.map((r, i) => `${x(i).toFixed(1)},${y(r.v).toFixed(1)}`).join(" ");
-        const lastRow = s.rows[s.rows.length - 1];
+      {series.map((s) => {
+        const pts = s.pts
+          .map((v, i) => (v == null ? null : ({ px: x(i), py: y(v), v } as const)))
+          .filter((p): p is NonNullable<typeof p> => p !== null);
+        if (!pts.length) return null;
+        const line = pts.map((p) => `${p.px.toFixed(1)},${p.py.toFixed(1)}`).join(" ");
+        const last = pts[pts.length - 1];
         return (
-          <g key={s.trader}>
-            <polyline points={pts} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-            <circle cx={x(s.rows.length - 1)} cy={y(lastRow.v)} r={3} fill={color} />
-            <text x={x(s.rows.length - 1) + 6} y={y(lastRow.v) - 6} fontSize="10" fill={color}>
-              {s.trader} {lastRow.v >= 0 ? "+" : ""}{lastRow.v.toFixed(1)}%
-            </text>
+          <g key={s.label}>
+            <polyline points={line} fill="none" stroke={s.color} strokeWidth={s.dashed ? 1.5 : 2} strokeDasharray={s.dashed ? "5 4" : undefined} strokeLinejoin="round" strokeLinecap="round" />
+            {!s.dashed && <circle cx={last.px} cy={last.py} r={3} fill={s.color} />}
+            {!s.dashed && (
+              <text x={last.px + 6} y={last.py - 6} fontSize="10" fill={s.color}>
+                {s.label} {last.v >= 0 ? "+" : ""}{last.v.toFixed(1)}%
+              </text>
+            )}
           </g>
         );
       })}
+      <text x={P.l} y={H - 8} fontSize="10" fill="var(--muted)">{axes[0]}</text>
+      <text x={W - P.r} y={H - 8} textAnchor="end" fontSize="10" fill="var(--muted)">{axes[axes.length - 1]}</text>
     </svg>
+  );
+}
+
+// ── Catalyst Swing Trader (Trader 6) ────────────────────────────────────
+type CatalystScore = {
+  symbol: string;
+  sector?: string;
+  composite_score?: number;
+  rank?: number;
+  catalyst_signal?: string | null;
+  llm_analyzed?: boolean;
+  verdict?: { signal?: string; urgency?: number; confidence?: number; rationale?: string };
+};
+
+type CatalystPosition = {
+  symbol: string;
+  entry_date: string;
+  entry_price?: number;
+  qty: number;
+  atr?: number;
+  stop_loss?: number;
+  trailing_stop?: number;
+  target?: number;
+  days_held?: number;
+  last_price?: number;
+  avg_price?: number;
+};
+
+type NewsRow = {
+  symbol: string;
+  title: string;
+  source?: string;
+  url?: string;
+  published_at?: string;
+};
+
+type CatalystTrade = {
+  trader_id: string;
+  date: string;
+  symbol: string;
+  side: string;
+  qty: number;
+  signal_price?: number;
+  fill_price?: number;
+  realized_pnl?: number;
+};
+
+function SignalBadge({ signal }: { signal?: string | null }) {
+  const s = String(signal ?? "none");
+  const cls = s === "positive" ? "buy" : s === "negative" ? "sell" : "pending";
+  return <span className={`badge ${cls}`}>{s}</span>;
+}
+
+function CatalystPanel() {
+  const [scores, setScores] = useState<CatalystScore[]>([]);
+  const [positions, setPositions] = useState<CatalystPosition[]>([]);
+  const [news, setNews] = useState<NewsRow[]>([]);
+  const [budget, setBudget] = useState<AnyDict[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setError("");
+      try {
+        const [sc, pos, nw, us] = await Promise.all([
+          api<{ scores: CatalystScore[] }>("/finance/catalyst/scores", { limit: 50 }),
+          api<{ positions: CatalystPosition[] }>("/finance/catalyst/positions"),
+          api<{ news: NewsRow[] }>("/finance/catalyst/news", { limit: 100 }),
+          api<{ budget: AnyDict[] }>("/finance/catalyst/usage"),
+        ]);
+        if (cancelled) return;
+        setScores(sc.scores ?? []);
+        setPositions(pos.positions ?? []);
+        setNews(nw.news ?? []);
+        setBudget(us.budget ?? []);
+      } catch (e: any) {
+        if (!cancelled) setError(e.message);
+      }
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const budgetToday = budget[0]?.calls_used ?? 0;
+
+  return (
+    <>
+      <div className="stat-cards">
+        <div className="stat-card">
+          <span className="stat-label">Universe</span>
+          <div className="stat-num" style={{ color: "var(--finance)" }}>{scores.length}</div>
+          <div className="stat-sub">factor-composite funnel</div>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">Open Positions</span>
+          <div className="stat-num">{positions.length}</div>
+          <div className="stat-sub">swing book · max 8</div>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">LLM Calls Today</span>
+          <div className="stat-num">{budgetToday}</div>
+          <div className="stat-sub">daily budget · capped at 65</div>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">News Captured</span>
+          <div className="stat-num">{news.length}</div>
+          <div className="stat-sub">headlines across the funnel</div>
+        </div>
+      </div>
+
+      {error && <div className="error">{error}</div>}
+
+      {positions.length > 0 && (
+        <div className="card" style={{ marginBottom: 16, overflowX: "auto" }}>
+          <h2>Open Swing Positions</h2>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th className="num">Qty</th>
+                <th className="num">Entry</th>
+                <th className="num">Last</th>
+                <th className="num">Stop</th>
+                <th className="num">Trailing</th>
+                <th className="num">Target</th>
+                <th className="num">Days</th>
+              </tr>
+            </thead>
+            <tbody>
+              {positions.map((p) => (
+                <tr key={p.symbol}>
+                  <td><span className="sym">{p.symbol.replace(/\.NS$/, "")}</span></td>
+                  <td className="num">{p.qty.toLocaleString("en-IN")}</td>
+                  <td className="num">{price(p.entry_price)}</td>
+                  <td className="num">{price(p.last_price)}</td>
+                  <td className="num">{price(p.stop_loss)}</td>
+                  <td className="num">{price(p.trailing_stop)}</td>
+                  <td className="num">{price(p.target)}</td>
+                  <td className="num">{p.days_held ?? 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <CatalystInsights />
+    </>
+  );
+}
+
+// Self-contained catalyst news + LLM verdicts + recent trades. Rendered on the
+// Catalyst tab and, when Catalyst is the filtered strategy, on the Portfolio tab.
+function CatalystInsights() {
+  const [scores, setScores] = useState<CatalystScore[]>([]);
+  const [news, setNews] = useState<NewsRow[]>([]);
+  const [trades, setTrades] = useState<CatalystTrade[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setError("");
+      try {
+        const [sc, nw, tr] = await Promise.all([
+          api<{ scores: CatalystScore[] }>("/finance/catalyst/scores", { limit: 50 }),
+          api<{ news: NewsRow[] }>("/finance/catalyst/news", { limit: 100 }),
+          api<{ trades: CatalystTrade[] }>("/finance/trades", { strategy: "catalyst_swing", limit: 20 }),
+        ]);
+        if (cancelled) return;
+        setScores(sc.scores ?? []);
+        setNews(nw.news ?? []);
+        setTrades(tr.trades ?? []);
+      } catch (e: any) {
+        if (!cancelled) setError(e.message);
+      }
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const newsBySymbol = useMemo(() => {
+    const m: Record<string, NewsRow[]> = {};
+    for (const n of news) {
+      (m[n.symbol] = m[n.symbol] ?? []).push(n);
+    }
+    return m;
+  }, [news]);
+
+  return (
+    <>
+      {error && <div className="error">{error}</div>}
+
+      {trades.length > 0 && (
+        <div className="card" style={{ marginBottom: 16, overflowX: "auto" }}>
+          <h2>Recent Catalyst Trades</h2>
+          <p className="muted">Executed buy/sell history for the swing book (newest first).</p>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th className="num">Qty</th>
+                <th className="num">Signal</th>
+                <th className="num">Fill</th>
+                <th className="num">Realized PnL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trades.map((t, i) => (
+                <tr key={i}>
+                  <td className="muted">{fmtDate(t.date)}</td>
+                  <td><span className="sym">{t.symbol.replace(/\.NS$/, "")}</span></td>
+                  <td><SideBadge side={t.side} /></td>
+                  <td className="num">{t.qty.toLocaleString("en-IN")}</td>
+                  <td className="num">{price(t.signal_price)}</td>
+                  <td className="num">{price(t.fill_price)}</td>
+                  <td className="num"><Pnl v={t.realized_pnl} abs /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="card" style={{ overflowX: "auto" }}>
+        <h2>Screen · LLM Catalyst Verdicts</h2>
+        <p className="muted">
+          Per-stock factor composite, the LLM catalyst verdict (grounded in the news below), and the news headlines the verdict was based on.
+        </p>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Symbol</th>
+              <th>Sector</th>
+              <th className="num">Composite</th>
+              <th>Signal</th>
+              <th className="num">Conf</th>
+              <th className="num">Urg</th>
+              <th>Rationale</th>
+              <th>News</th>
+            </tr>
+          </thead>
+          <tbody>
+            {scores.map((s) => {
+              const symNews = newsBySymbol[s.symbol] ?? [];
+              return (
+                <tr key={s.symbol}>
+                  <td className="muted">{s.rank ?? ""}</td>
+                  <td><span className="sym">{s.symbol.replace(/\.NS$/, "")}</span></td>
+                  <td className="muted wrap sec-cell">{s.sector}</td>
+                  <td className="num">{s.composite_score != null ? s.composite_score.toFixed(3) : "—"}</td>
+                  <td><SignalBadge signal={s.catalyst_signal ?? s.verdict?.signal} /></td>
+                  <td className="num">{s.verdict?.confidence != null ? `${(s.verdict.confidence * 100).toFixed(0)}%` : "—"}</td>
+                  <td className="num">{s.verdict?.urgency != null ? `${(s.verdict.urgency * 100).toFixed(0)}%` : "—"}</td>
+                  <td className="muted wrap rat-cell">{s.verdict?.rationale}</td>
+                  <td className="wrap news-cell">
+                    {symNews.length === 0 ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      <div className="news-stack">
+                        {symNews.slice(0, 3).map((n, i) => (
+                          <div key={i} className="news-item">
+                            <a className="news-title" href={n.url} target="_blank" rel="noreferrer" title={n.title}>
+                              {n.title}
+                            </a>
+                            {n.source && <span className="news-src">{n.source}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {scores.length === 0 && <div className="muted" style={{ padding: 16 }}>No screen data yet — run the 18:20 catalyst_screen job.</div>}
+      </div>
+    </>
   );
 }

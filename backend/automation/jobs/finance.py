@@ -27,6 +27,8 @@ from backend.db import feature_store
 
 logger = logging.getLogger("vesper.automation.finance")
 
+_DOWNLOAD_CHUNK = 40  # yfinance bulk downloads silently drop tickers beyond this
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")[:19]
@@ -68,7 +70,10 @@ def _yf():
 async def fetch_equity(limit: int = 200, start: str = "2018-01-01") -> dict:
     """06:00 IST — fetch the Nifty universe from yfinance into equity_daily.
 
-    Degrades honestly (logged run, no data) when yfinance is unreachable.
+    Downloads in chunks of `_DOWNLOAD_CHUNK` tickers so a single flaky bulk
+    request can't silently drop most of the universe (previously only the first
+    15 alphabetically-sorted symbols survived, which starved every downstream
+    screen). Degrades honestly (logged run, no data) when yfinance is down.
     """
     try:
         yf = _yf()
@@ -81,44 +86,54 @@ async def fetch_equity(limit: int = 200, start: str = "2018-01-01") -> dict:
         await _record_run("fetch_equity", "degraded", "universe CSV missing")
         return {"ok": True, "job": "fetch_equity", "degraded": True, "note": "no universe symbols"}
 
-    try:
-        end = (datetime.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        df = yf.download(symbols, start=start, end=end, progress=False, auto_adjust=True, group_by="ticker", threads=True)
-    except Exception as exc:  # noqa: BLE001 - any fetch failure degrades, not crashes
-        await _record_run("fetch_equity", "degraded", f"yfinance download failed: {exc}")
-        logger.warning("fetch_equity download failed: %s", exc)
-        return {"ok": True, "job": "fetch_equity", "degraded": True, "note": str(exc)[:300]}
-
-    if df is None or df.empty:
-        await _record_run("fetch_equity", "degraded", "yfinance returned empty")
-        return {"ok": True, "job": "fetch_equity", "degraded": True, "note": "empty download"}
-
-    # yf.download with group_by='ticker' yields MultiIndex columns (ticker, field).
+    end = (datetime.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     rows: list[dict] = []
-    for symbol in df.columns.get_level_values(0).unique():
+    failed: list[str] = []
+    for i in range(0, len(symbols), _DOWNLOAD_CHUNK):
+        chunk = symbols[i : i + _DOWNLOAD_CHUNK]
         try:
-            sub = df[symbol].dropna(subset=["Close"])
-            for ts, r in sub.iterrows():
-                rows.append({
-                    "Date": pd.Timestamp(ts).date(),
-                    "Symbol": symbol,
-                    "Open": float(r.get("Open") or 0),
-                    "High": float(r.get("High") or 0),
-                    "Low": float(r.get("Low") or 0),
-                    "Close": float(r.get("Close") or 0),
-                    "Volume": int(r.get("Volume") or 0),
-                })
-        except Exception:  # pragma: no cover - skip a bad ticker
+            df = yf.download(
+                chunk, start=start, end=end, progress=False,
+                auto_adjust=True, group_by="ticker", threads=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - skip a bad chunk, keep going
+            failed.extend(chunk)
+            logger.warning("fetch_equity chunk %d failed: %s", i // _DOWNLOAD_CHUNK, exc)
             continue
+        if df is None or df.empty:
+            failed.extend(chunk)
+            continue
+
+        # yf.download with group_by='ticker' yields MultiIndex columns (ticker, field).
+        got = list(df.columns.get_level_values(0).unique())
+        failed.extend(s for s in chunk if s not in got)
+        for symbol in got:
+            try:
+                sub = df[symbol].dropna(subset=["Close"])
+                for ts, r in sub.iterrows():
+                    rows.append({
+                        "Date": pd.Timestamp(ts).date(),
+                        "Symbol": symbol,
+                        "Open": float(r.get("Open") or 0),
+                        "High": float(r.get("High") or 0),
+                        "Low": float(r.get("Low") or 0),
+                        "Close": float(r.get("Close") or 0),
+                        "Volume": int(r.get("Volume") or 0),
+                    })
+            except Exception:  # pragma: no cover - skip a bad ticker
+                failed.append(symbol)
 
     if not rows:
         await _record_run("fetch_equity", "degraded", "no rows parsed")
         return {"ok": True, "job": "fetch_equity", "degraded": True, "note": "no rows parsed"}
 
     written = feature_store.write_equity(pd.DataFrame(rows))
-    await _record_run("fetch_equity", "ok", f"persisted {written} rows across {len(symbols)} symbols", rows=written)
-    logger.info("fetch_equity: %d rows persisted", written)
-    return {"ok": True, "job": "fetch_equity", "rows": written, "symbols": len(symbols)}
+    detail = f"persisted {written} rows across {len(set(r['Symbol'] for r in rows))} symbols"
+    if failed:
+        detail += f"; {len(failed)} tickers failed"
+    await _record_run("fetch_equity", "ok", detail, rows=written)
+    logger.info("fetch_equity: %s", detail)
+    return {"ok": True, "job": "fetch_equity", "rows": written, "symbols": len(set(r["Symbol"] for r in rows)), "failed": len(failed)}
 
 
 async def compute_factors() -> dict:

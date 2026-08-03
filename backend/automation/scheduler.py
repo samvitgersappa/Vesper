@@ -8,7 +8,8 @@ here (plan.md §12).
 
 Schedules mirror plan.md §12 (IST):
 - Market: fetch_equity 06:00, compute_factors 06:30, fetch_macro 07:00,
-  update_universe 07:30, paper_trade_eod 17:00 Mon-Fri
+  update_universe 07:30, paper_trade_eod 18:00 Mon-Fri (5 classic traders;
+  6th catalyst_swing runs its own 19:00 job after its 18:00-18:50 data feed)
 - Knowledge Architect Pass: nightly 02:30
 - Graph Analytics: nightly 03:00
 - Graph projection backfill: nightly 03:05 (and once at worker startup)
@@ -21,6 +22,7 @@ Schedules mirror plan.md §12 (IST):
 
 import asyncio
 import logging
+import threading
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -48,7 +50,7 @@ JOB_SCHEDULE = {
     "compute_factors": {"trigger": "cron", "hour": 6, "minute": 30},
     "fetch_macro": {"trigger": "cron", "hour": 7, "minute": 0},
     "update_universe": {"trigger": "cron", "hour": 7, "minute": 30},
-    "paper_trade_eod": {"trigger": "cron", "hour": 17, "minute": 0, "day_of_week": "mon-fri"},
+    "paper_trade_eod": {"trigger": "cron", "hour": 18, "minute": 0, "day_of_week": "mon-fri"},
     "knowledge_architect_pass": {"trigger": "cron", "hour": 2, "minute": 30},
     "graph_analytics_pass": {"trigger": "cron", "hour": 3, "minute": 0},
     "graph_projection_backfill": {"trigger": "cron", "hour": 3, "minute": 5},
@@ -67,6 +69,7 @@ JOB_SCHEDULE = {
     "fetch_sector_indices": {"trigger": "cron", "hour": 18, "minute": 10, "day_of_week": "mon-fri"},
     "compute_market_breadth": {"trigger": "cron", "hour": 18, "minute": 15, "day_of_week": "mon-fri"},
     "catalyst_screen": {"trigger": "cron", "hour": 18, "minute": 20, "day_of_week": "mon-fri"},
+    "catalyst_news": {"trigger": "cron", "hour": 18, "minute": 30, "day_of_week": "mon-fri"},
     "catalyst_llm": {"trigger": "cron", "hour": 18, "minute": 40, "day_of_week": "mon-fri"},
     "catalyst_risk": {"trigger": "cron", "hour": 18, "minute": 50, "day_of_week": "mon-fri"},
     "catalyst_paper_trade": {"trigger": "cron", "hour": 19, "minute": 0, "day_of_week": "mon-fri"},
@@ -161,13 +164,21 @@ def _start_event_subscribers() -> None:
     import threading
 
     def _graph_sub():
+        import asyncio
+
         from backend.modules.graph.write_adapter import graph_subscriber
         from backend.events.bus import bus
+
+        async def _run_graph(event: str, payload: dict) -> None:
+            try:
+                await graph_subscriber(event, payload)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("graph_subscriber failed: %s", exc)
 
         try:
             bus.subscribe_multi(
                 ["PersonUpdated", "InteractionLogged", "KnowledgeIndexed"],
-                graph_subscriber,
+                lambda ev, pl: asyncio.run(_run_graph(ev, pl)),
             )
         except Exception as exc:  # pragma: no cover
             logger.warning("graph subscriber stopped: %s", exc)

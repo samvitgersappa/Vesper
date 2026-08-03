@@ -27,6 +27,7 @@ from backend.modules.finance.logic import portfolio as finance_portfolio
 from backend.modules.finance.logic import signals as finance_signals
 from backend.modules.finance.logic import strategies as finance_strategies
 from backend.modules.finance.logic import trades as finance_trades
+from backend.modules.finance.logic import catalyst as finance_catalyst
 from backend.modules.finance.eod import mark_to_market as finance_mark_to_market
 from backend.modules.finance.eod import run_eod as finance_run_eod
 from backend.modules.graph.logic import analytics as graph_analytics
@@ -221,6 +222,32 @@ async def api_finance_signals(strategy: str = "", limit: int = 20):
 @router.get("/finance/nav")
 async def api_finance_nav(strategy: str = "", limit: int = 60):
     return await finance_nav(strategy, limit)
+
+
+# ── Catalyst Swing Trader (Trader 6, read-only) ───────────────────────────
+@router.get("/finance/catalyst/scores")
+async def api_catalyst_scores(date: str = "", limit: int = 50):
+    return await finance_catalyst.scores(date or None, limit)
+
+
+@router.get("/finance/catalyst/positions")
+async def api_catalyst_positions():
+    return await finance_catalyst.positions()
+
+
+@router.get("/finance/catalyst/usage")
+async def api_catalyst_usage(limit: int = 30):
+    return await finance_catalyst.usage(limit)
+
+
+@router.get("/finance/catalyst/estimates")
+async def api_catalyst_estimates(date: str = "", limit: int = 50):
+    return await finance_catalyst.cost_gate(date or None, limit)
+
+
+@router.get("/finance/catalyst/news")
+async def api_catalyst_news(date: str = "", limit: int = 100):
+    return await finance_catalyst.news(date or None, limit)
 
 
 # ── Graph (universal intelligence graph, plan §10) ────────────────────────

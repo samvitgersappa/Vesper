@@ -26,7 +26,17 @@ DATABASE_URL = os.environ.get(
 # creates/disposes loops between executions while production runs one loop per
 # process). NullPool makes each acquire a fresh connection bound to the current
 # loop, which is correct for the test harness.
+#
+# The worker process also uses multiple event loops at runtime: its event
+# subscribers (graph write adapter, notification delivery) run each message
+# through `asyncio.run()` in a daemon thread, and the APScheduler jobs are
+# wrapped the same way. A shared connection pool would bind connections to the
+# first loop that used them and then fail on the next loop with "Future
+# attached to a different loop". The worker opts into NullPool via
+# VESPER_NULL_POOL=1 so every acquire binds a fresh connection to the current
+# loop (matching the multi-loop model).
 TESTING = os.environ.get("VESPER_TESTING") == "1"
+NULL_POOL = TESTING or os.environ.get("VESPER_NULL_POOL") == "1"
 
 
 def create_session_factory(url: str = DATABASE_URL):
@@ -35,7 +45,7 @@ def create_session_factory(url: str = DATABASE_URL):
         url,
         pool_pre_ping=True,
         pool_recycle=300,
-        poolclass=NullPool if TESTING else None,
+        poolclass=NullPool if NULL_POOL else None,
     )
     return engine, async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

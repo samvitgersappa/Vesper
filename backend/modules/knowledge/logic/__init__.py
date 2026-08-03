@@ -212,6 +212,12 @@ _IDEA_WORDS = [
     "recipe", "a reference", "reference", "remember this fact", "noted",
     "found out", "learned that", "read that", "came across", "a thought",
     "standalone", "a note", "note this", "an idea", "remember this idea",
+    "want to build", "going to build", "should build", "plan to build",
+    "build a", "build an", "make a", "create a", "want to make", "make an",
+    "a tool", "a cli", "an app", "a website", "a side project", "a project",
+    "worth a case study", "case study", "save this", "save that", "save a note",
+    "save this idea", "would be cool", "worth exploring", "worth trying",
+    "worth a try", "worth a shot", "an interesting idea",
 ]
 
 _MONTHS = {m: i + 1 for i, m in enumerate(
@@ -460,6 +466,22 @@ def _title_from_utterance(utterance: str) -> str:
     return utterance.strip().rstrip(".!")[:60]
 
 
+def _yaml_value(value: str) -> str:
+    """Render a value as a YAML scalar, quoting when the raw text could break
+    frontmatter parsing (leading indicators, colons, quotes, hashes)."""
+    v = str(value)
+    if (
+        not v
+        or v[0] in "!&*-?|>%@`\"'#[]{}"
+        or ": " in v
+        or v.startswith(": ")
+        or " #" in v
+        or v.endswith(":")
+    ):
+        return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return v
+
+
 # ─── DB writes (rule 1-3, 8) ───────────────────────────────────────────────
 
 
@@ -604,7 +626,7 @@ async def _create_vault_note(utterance: str) -> Optional[str]:
         path.parent.mkdir(parents=True, exist_ok=True)
         content = (
             "---\n"
-            f"title: {title}\n"
+            f"title: {_yaml_value(title)}\n"
             f"slug: {slug}\n"
             "type: note\n"
             "status: draft\n"
@@ -649,7 +671,7 @@ async def _create_image_note(utterance: str, image_path: str) -> Optional[str]:
             shutil.copy2(src, dest)
         content = (
             "---\n"
-            f"title: {title}\n"
+            f"title: {_yaml_value(title)}\n"
             f"slug: {slug}\n"
             "type: image_note\n"
             "status: draft\n"

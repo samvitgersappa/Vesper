@@ -51,7 +51,8 @@ tool: knowledge.capture(utterance, conversation_context) ->
         ref_id, confidence }
 ```
 
-Hermes calls this tool (via a skill, `hermes-config/skills/capture.skill`) whenever a
+Hermes calls this tool (via a skill, `hermes-config/skills/capture/SKILL.md`, with a
+deterministic plugin backstop at `hermes-config/plugins/vesper-capture-router/`) whenever a
 turn contains "remember," "note," "don't let me forget," or similar intent — not just
 when the utterance is *only* that, since these often arrive attached to other content
 (see `plan.md` §4's worked example, which is exactly this pattern already).
@@ -400,35 +401,46 @@ Phase 1/Phase 10 when you next consolidate that document; captured here since it
 of this session's requests.
 
 **Goal:** `git clone <repo> && cd vesper && ./start.sh` is the entire setup process.
-The only interactive input should be secrets that can't be generated or guessed:
+The only interactive input is secrets that can't be generated or guessed:
 
-1. **Preflight**: check for Docker + Docker Compose; install via `apt` if missing
-   (Ubuntu 24.04 target per `plan.md` §15), prompting for `sudo` if needed.
-2. **Secrets, collected once, on first run only** (skip entirely on a re-run if `.env`
-   already exists — the script must be idempotent):
-   - LLM provider API key (OpenCode Go).
-   - Telegram bot token, and your Telegram user ID (for the `TELEGRAM_ALLOWED_USERS`-
-     equivalent allowlist, `plan.md` §16).
-   - GitHub personal access token + repo URL, only if §7's vault backup is being
-     enabled — make this step skippable ("press enter to skip, set up later").
+1. **Toolchain**: install git, python3-venv, node/npm, openssl, Docker + Compose,
+   and Caddy via `apt` (Ubuntu 24.04 target per `plan.md` §15) or Homebrew
+   (macOS). Also installs **Hermes Agent** via its official installer.
+2. **Secrets, collected once, on first run only** (skip entirely on a re-run if
+   `.env` already exists — the script must be idempotent):
+   - LLM provider API key (OpenCode Go) — **required**.
+   - Telegram bot token **and your numeric Telegram user ID** (for the
+     `TELEGRAM_ALLOWED_USERS` allowlist, `plan.md` §16) — **required** for the
+     agent to answer you.
    - Everything else (Postgres password, JWT secret, internal service URLs) is
      **generated automatically**, never asked for.
-3. **Bring up the data layer**: `docker compose up -d postgres redis caddy`, wait for
-   health checks, then run migrations automatically (`alembic upgrade head`).
-4. **Bring up the module layer**: `docker compose up -d vesper-api vesper-worker`.
-5. **Install and configure Hermes Agent**: run its official installer, write
-   `hermes-config/provider.yaml` from the collected API key (including the
-   `auxiliary.vision` setting from §8), register every module's MCP server in
-   `hermes-config/mcp_servers.json`, install the skills directory (including
-   `daily_journal_questionnaire` and its question config from §2), configure the
-   TencentDB Agent Memory plugin, and set up the cron schedule (including §7's
-   vault-backup job).
-6. **Start Hermes Agent's gateway** pointed at the provided Telegram token.
-7. **Health check + handoff message**: confirm Postgres/Redis/every module MCP
-   server/Hermes Agent's gateway all report healthy, then print something like: "Vesper
-   is live — message your bot on Telegram to get started."
-8. **Idempotency**: safe to re-run at any time — detect what's already set up and skip
-   it, so `start.sh` doubles as the update/repair path, not just first-run setup.
+3. **Second-brain vault**: create `~/Documents/KnowledgeVault` fresh
+   (`00 Journal/YYYY`, `03 Knowledge`, `99 Assets/images`, `01 Inbox`,
+   `02 Projects`, `index.md`) and git-init it — no pre-existing vault assumed.
+4. **Bring up the data layer**: `docker compose up -d postgres redis`, wait for
+   health. On first run, wipe the DB to a genuinely empty state (schemas,
+   tables, enum types, alembic version), then `alembic upgrade head` → 56 empty
+   tables across 7 schemas; initialise the DuckDB feature store; seed the 6
+   paper-trader accounts.
+5. **Provision Hermes Agent** (`hermes-config/install_hermes.py`): write
+   `~/.hermes/.env`, merge `hermes-config/hermes.config.template.yaml` →
+   `~/.hermes/config.yaml` (provider + `auxiliary.vision` from §8, approvals,
+   skills/cron external dirs), sync the 8 module MCP servers, install the
+   `vesper-capture-router` plugin, and register the 6 reasoning cron jobs
+   (Morning Brief, Daily Journal Questionnaire 21:30, Reviews, Knowledge
+   Architect).
+6. **Start the backend**: the API (:8000) and worker as host processes
+   (`.venv/bin/python -m backend.main` with `APP_MODE=api|worker`).
+7. **Start the web**: Quartz garden (Docker) + Caddy on :80 serving the static
+   frontend, proxying `/api`, and serving `/brain` — reachable from your phone
+   at `http://<server-ip>/`.
+8. **Start Hermes Agent's gateway** pointed at the provided Telegram token.
+9. **Health check + handoff message**: confirm Postgres/Redis/every module MCP
+   server/Hermes Agent's gateway all report healthy, then print something like:
+   "Vesper is live — message your bot on Telegram to get started."
+10. **Idempotency**: safe to re-run at any time — detect what's already set up
+    and skip it, so `start.sh` doubles as the update/repair path, not just
+    first-run setup. `--fresh` forces a full DB wipe + re-migrate.
 
 ---
 

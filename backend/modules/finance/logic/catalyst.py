@@ -7,6 +7,8 @@ here is SELECT-only; the worker remains the only writer to the finance schema
 
 from typing import Any, Optional
 
+import json
+
 from sqlalchemy import text
 
 from backend.modules.db import session_factory
@@ -25,7 +27,7 @@ def _clamp(limit: int) -> int:
 
 
 async def scores(date: Optional[str] = None, limit: int = 50) -> dict[str, Any]:
-    """Latest (or dated) catalyst_scores, best first."""
+    """Latest (or dated) catalyst_scores with LLM verdicts, best first."""
     limit = _clamp(limit)
     where = ""
     params: dict = {"n": limit}
@@ -36,29 +38,39 @@ async def scores(date: Optional[str] = None, limit: int = 50) -> dict[str, Any]:
         rows = (await db.execute(
             text(
                 f"SELECT date, symbol, sector, market_score, sector_score, stock_score, "
-                f"composite_score, rank, catalyst_signal, llm_analyzed "
+                f"composite_score, rank, catalyst_signal, catalyst_json, llm_analyzed "
                 f"FROM finance.catalyst_scores {where} "
                 f"ORDER BY composite_score DESC LIMIT :n"
             ),
             params,
         )).all()
-    return {
-        "scores": [
-            {
-                "date": r.date,
-                "symbol": r.symbol,
-                "sector": r.sector,
-                "market_score": _q(r.market_score),
-                "sector_score": _q(r.sector_score),
-                "stock_score": _q(r.stock_score),
-                "composite_score": _q(r.composite_score),
-                "rank": r.rank,
-                "catalyst_signal": r.catalyst_signal,
-                "llm_analyzed": bool(r.llm_analyzed),
-            }
-            for r in rows
-        ]
-    }
+    out = []
+    for r in rows:
+        verdict = {}
+        if r.catalyst_json:
+            try:
+                verdict = json.loads(r.catalyst_json)
+            except Exception:  # noqa: BLE001 - malformed stored JSON degrades to {}
+                verdict = {}
+        out.append({
+            "date": r.date,
+            "symbol": r.symbol,
+            "sector": r.sector,
+            "market_score": _q(r.market_score),
+            "sector_score": _q(r.sector_score),
+            "stock_score": _q(r.stock_score),
+            "composite_score": _q(r.composite_score),
+            "rank": r.rank,
+            "catalyst_signal": r.catalyst_signal,
+            "llm_analyzed": bool(r.llm_analyzed),
+            "verdict": {
+                "signal": verdict.get("signal"),
+                "urgency": verdict.get("urgency"),
+                "confidence": verdict.get("confidence"),
+                "rationale": verdict.get("rationale", ""),
+            },
+        })
+    return {"scores": out}
 
 
 async def candidates(date: Optional[str] = None, limit: int = 100) -> dict[str, Any]:
@@ -150,6 +162,39 @@ async def usage(limit: int = 30) -> dict[str, Any]:
             {"ts": str(r.ts), "date": r.date, "symbol": r.symbol, "model": r.model, "ok": bool(r.ok)}
             for r in call_rows
         ],
+    }
+
+
+async def news(date: Optional[str] = None, limit: int = 100) -> dict[str, Any]:
+    """Stored per-stock news, newest first (SELECT-only)."""
+    limit = _clamp(limit)
+    where = ""
+    params: dict = {"n": limit}
+    if date:
+        where = "WHERE date = :d"
+        params["d"] = date
+    async with session_factory()() as db:
+        rows = (await db.execute(
+            text(
+                f"SELECT date, symbol, title, source, url, published_at, summary "
+                f"FROM finance.catalyst_news {where} "
+                f"ORDER BY published_at DESC, date DESC LIMIT :n"
+            ),
+            params,
+        )).all()
+    return {
+        "news": [
+            {
+                "date": r.date,
+                "symbol": r.symbol,
+                "title": r.title,
+                "source": r.source,
+                "url": r.url,
+                "published_at": r.published_at,
+                "summary": r.summary,
+            }
+            for r in rows
+        ]
     }
 
 

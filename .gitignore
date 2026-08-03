@@ -15,6 +15,7 @@ venv/
 backend/data/**
 !backend/data/raw/
 !backend/data/raw/**
+.run/
 
 # Node / frontend
 node_modules/
