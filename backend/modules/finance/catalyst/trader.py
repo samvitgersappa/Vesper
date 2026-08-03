@@ -36,7 +36,7 @@ from backend.modules.finance.catalyst._util import ist_today, record_run
 
 logger = logging.getLogger("vesper.finance.catalyst.trader")
 
-STARTING_CAPITAL = 100_000.0
+STARTING_CAPITAL = 1_000_000.0  # ₹10L paper capital for the catalyst swing trader
 _SLIPPAGE_BPS = 8
 _ATR_PERIOD = 14
 _STOP_MULT = 1.5  # ATR stop: entry - 1.5 * ATR

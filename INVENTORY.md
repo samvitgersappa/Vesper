@@ -663,6 +663,13 @@ full 18:00–19:00 schedule, logs `degraded` runs, scores the funnel off the fac
 (Layer 1 = neutral-ish market, Layer 2 = neutral sector, Layer 3 = real cross-sectional
 factor rank), and keeps the cost gate / risk / paper-trade engine fully exercised.
 
+**Paper capital (2026-08-03):** the `catalyst_swing` paper account is funded at **₹10L
+(1,000,000)** — `STARTING_CAPITAL = 1_000_000.0` in
+`backend/modules/finance/catalyst/trader.py`, the `finance.paper_account` row updated
+in-place, and the 2026-08-03 `paper_nav_history` baseline reset to 1,000,000. `_enter`
+sizes each position as `equity / MAX_CONCURRENT_POSITIONS`, so the larger notional scales
+the cost-gate check (target-to-cost ≥ 3x) and the ₹-PnL meaningfully.
+
 ---
 
 *Phase 0 complete. `COMPLETION.md` (Quiver) read fully. Phase 0.5 gate passed (GO). Phase 2
@@ -721,6 +728,12 @@ records what landed in the final build pass against `plan.md` + `ADDENDUM_SECOND
 - `frontend/` (Next.js 15, static-exported via `output: "export"`, served by Caddy):
   Dashboard, Graph OS (force-graph), People, Journal, Finance (portfolio/trades/signals/nav),
   Study, Calendar. Talks to `backend/api/routers.py` REST surface (`/api/...`).
+- **Intelligence graph fix (2026-08-03):** `/graph` crashed in the browser because
+  `simEdges` were built straight from API edges carrying `source_id`/`target_id` but no
+  `source`/`target`, so `forceLink` resolved every link to `undefined` and threw
+  `node not found: undefined` at simulation init. Fixed in
+  `frontend/src/app/graph/page.tsx` by mapping `{ source: e.source_id, target: e.target_id }`
+  before `forceLink`; re-verified by running the simulation against the live API data.
 
 ### Phase 10 — Integration tests
 - `tests/test_integration.py` (pytest, 11 tests): relationship/journal/study logic,

@@ -141,7 +141,10 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 | `catalyst_paper_trade` | 19:00 Mon–Fri | Catalyst Swing entries (cost-gated) + NAV snapshot |
 
 Every finance job logs to `finance.job_runs` and degrades honestly (records a
-`degraded` run) instead of failing the worker or fabricating data.
+`degraded` run) instead of failing the worker or fabricating data. The catalyst
+swing trader is the 6th strategy (`catalyst_swing`) and is funded on a **₹10L
+(1,000,000) paper account** — position sizing scales off account equity, so the
+funnel, cost gate and swing engine are exercised at meaningful notional sizes.
 
 ## Module MCP servers (64 tools)
 

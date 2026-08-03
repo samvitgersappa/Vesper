@@ -156,7 +156,7 @@ export default function Graph() {
     const nodeG = rootG.append("g");
 
     const simNodes: GNode[] = filtered.nodes.map((n) => ({ ...n }));
-    const simEdges = filtered.edges.map((e) => ({ ...e })) as GEdge[];
+    const simEdges = filtered.edges.map((e) => ({ ...e, source: e.source_id, target: e.target_id })) as GEdge[];
 
     const simulation = forceSimulation<GNode>(simNodes as GNode[])
       .force(
