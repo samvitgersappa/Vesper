@@ -1,0 +1,6 @@
+# IPO module event manifest (plan.md §6)
+# Read-only curated calendar — no events emitted or consumed today. If a live
+# provider + DB write path is added, emit IPOListed / IPOCalendarRefreshed.
+publishes: []
+
+subscribes: []

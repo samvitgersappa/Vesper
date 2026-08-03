@@ -69,6 +69,8 @@ def _node_dict(n: GraphNode) -> dict[str, Any]:
         "id": n.id,
         "entity_type": n.entity_type,
         "label": n.label,
+        "ref_id": n.ref_id,
+        "metadata": n.node_metadata or {},
         "community_id": n.community_id,
         "betweenness_score": round(n.betweenness_score, 4) if n.betweenness_score is not None else None,
     }

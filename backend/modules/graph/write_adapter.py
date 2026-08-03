@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -143,10 +144,19 @@ async def _on_interaction(interaction_id: str) -> None:
                 {"type": interaction.type if hasattr(interaction.type, "value") else interaction.type,
                  "summary": interaction.summary},
             )
-            await _upsert_edge(person_node, event_node, "participated", weight=1.0)
+            await _upsert_edge(db, person_node, event_node, "participated", weight=1.0)
             await db.commit()
     except Exception as exc:  # pragma: no cover
         logger.warning("graph interaction adapter failed: %s", exc)
+
+
+def _vault_rel(path: str) -> str:
+    """Vault-relative path for a note (falls back to the raw path)."""
+    try:
+        from backend.modules.knowledge.logic import vault_root
+        return str(Path(path).relative_to(vault_root()))
+    except Exception:
+        return str(path)
 
 
 async def _on_knowledge(payload: dict) -> None:
@@ -155,22 +165,18 @@ async def _on_knowledge(payload: dict) -> None:
         path = payload.get("file_path") or payload.get("path") or ""
         if not path:
             return
+        rel = _vault_rel(path)
         async with session_factory()() as db:
             node = await _upsert_node(
                 db,
                 "note",
-                str(path),
-                str(Path(path).stem) if (path := _import_path(path)) else str(path),
-                {"vault_path": path},
+                rel,
+                str(Path(rel).stem),
+                {"vault_path": rel},
             )
             await db.commit()
     except Exception as exc:  # pragma: no cover
         logger.warning("graph knowledge adapter failed: %s", exc)
-
-
-def _import_path(path: str):
-    from pathlib import Path
-    return Path(path)
 
 
 async def graph_subscriber(event: str, payload: dict) -> None:

@@ -29,8 +29,8 @@ class GraphNode(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     # The domain row this node mirrors: (ref_table, ref_id).
-    ref_table: Mapped[Optional[str]] = mapped_column(String(100))
-    ref_id: Mapped[Optional[str]] = mapped_column(String(100))
+    ref_table: Mapped[Optional[str]] = mapped_column(Text)
+    ref_id: Mapped[Optional[str]] = mapped_column(Text)
     label: Mapped[Optional[str]] = mapped_column(Text)
     node_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON, default=dict)
 

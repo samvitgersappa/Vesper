@@ -24,3 +24,7 @@ frontend/out/
 # Hermes Agent runtime data
 hermes-config/memory/*.sqlite
 hermes-config/memory/persona.md
+
+# Build artifacts
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo

@@ -45,7 +45,11 @@ services:
     volumes:
       - caddy_data:/data
       - caddy_config:/config
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./frontend/out:/srv:ro
+      - quartz_out:/srv/brain:ro
+    environment:
+      VESPER_DOMAIN: ${VESPER_DOMAIN:-localhost}
     mem_limit: 64m
     mem_reservation: 25m
     depends_on:
@@ -110,6 +114,35 @@ services:
     # Transient, isolated so a burst can't inflate steady-state RAM (plan §15).
     mem_limit: 1g
 
+  # Vesper Second Brain — Quartz v5 static garden (ADDENDUM_SECOND_BRAIN.md §7).
+  # Builds the Obsidian vault into a private, graph-view site. Caddy serves the
+  # built output at /brain behind the Tailscale-only domain; the automation
+  # worker triggers rebuilds via POST /rebuild (no Node in the worker image).
+  vesper-quartz:
+    build:
+      context: .
+      dockerfile: quartz/Dockerfile
+    restart: unless-stopped
+    environment:
+      VAULT_DIR: /vault
+      CONTENT_DIR: /quartz/content
+      OUTPUT_DIR: /out
+      TRIGGER_PORT: "8081"
+      BASE_URL: ${QUARTZ_BASE_URL:-brain.local}
+    volumes:
+      - ${HERMES_VAULT_PATH_ABS}:/vault:ro
+      - quartz_out:/out
+    ports:
+      - "127.0.0.1:8081:8081"
+    mem_limit: 512m
+    mem_reservation: 300m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # Ollama local fallback (plan §14/§15) — OFF by default, on-demand only.
   # Not part of the default `docker compose up`: start it only during an
   # OpenCode Go outage with `docker compose --profile fallback up ollama`.
@@ -134,4 +167,5 @@ volumes:
   data_lancedb:
   caddy_data:
   caddy_config:
+  quartz_out:
   ollama_data:

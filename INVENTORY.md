@@ -472,13 +472,32 @@ Install footprint (recorded for the Phase 10 resource audit):
 
 **Verification notes (local, on Ollama):** the full L0→L1 pipeline was verified live with a
 local model — a real Hermes CLI conversation was captured to L0 and extracted to L1
-(`extracted=1, stored=1`, scene `数学题解`); recall works with `strategy: keyword`
-(`memory_count=1, code=0`; `hybrid` requires an EmbeddingService and errors code 10001, so
-keyword is the correct setting with embeddings disabled). The Gateway was then re-pointed at
-the API provider (`deepseek-v4-flash`) and confirmed to boot cleanly, resolve the right
-model, and fail only on the known China RegionError / weekly-limit (both transient, resolved
-by the §4.1 opt-in + Monday reset) — no config errors. L2/L3 (scene/persona) run on the same
-LLM path and were exercised locally; tool-calling quality depends on the model used.
+(`extracted=1, stored=1`, scene `数学题解`). The Gateway was then re-pointed at the API
+provider (`deepseek-v4-flash`) and confirmed to boot cleanly, resolve the right model, and
+fail only on the known China RegionError / weekly-limit (both transient, resolved by the
+§4.1 opt-in + Monday reset) — no config errors. L2/L3 (scene/persona) run on the same LLM
+path and were exercised locally; tool-calling quality depends on the model used.
+
+**2026-08-03 — Part A divergence closed (recall now semantic/hybrid):** `tdai-gateway.yaml`
+`memory.embedding` was upgraded from `provider: "none"` to a working remote provider pointed
+at local Ollama, and `memory.recall.strategy` flipped `keyword` → `hybrid`:
+`provider: "openai"` (any non-`local` value selects `OpenAIEmbeddingService`),
+`baseUrl: http://127.0.0.1:11434/v1`, `apiKey: ollama` (placeholder — the plugin requires a
+non-empty key; Ollama ignores it), `model: nomic-embed-text` (768-dim, pulled via
+`ollama pull nomic-embed-text`), `dimensions: 768`, `sendDimensions: false` (Ollama's
+OpenAI-compatible `/v1/embeddings` already returns 768 and accepts-but-ignores `dimensions`).
+Verified end-to-end on this box with the Gateway started under local LLM overrides
+(`TDAI_LLM_*` → `http://127.0.0.1:11434/v1` + `llama3.2:latest`): L1 extraction wrote a test
+memory with `dims=768, norm=1.0000`; both `POST /search/memories` and `POST /recall`
+return `strategy: "hybrid"` with `code=0`, and the semantic query "what is my favorite way
+to make coffee" correctly recalled "用户喜欢做 pour-over 咖啡" from a stored pour-over
+coffee conversation. The earlier "hybrid requires an EmbeddingService and errors code
+10001" limitation (recorded above) no longer applies — embeddings are on. Note: on boot the
+store auto-dropped the vec0 tables (existing L1 rows predated any embedding config) and
+re-created them at 768-dim; new captures dual-write BM25 + vector. Standing caveat: the
+Hermes journal is English but `memory.bm25.language` remains `"zh"` — BM25 (FTS) matching
+for English queries is suboptimal, so hybrid recall leans on the vector leg; a future
+change could set `bm25.language: "en"`.
 
 ### 6.2 plan.md §14 "every tier is an API call" — intentional fallback tier
 

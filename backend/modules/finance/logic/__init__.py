@@ -24,6 +24,49 @@ from backend.modules.db import session_factory
 
 _MAX_LIMIT = 500
 
+# Paper-trader roster metadata (plan.md §1.5 — the 5 live traders). The DB only
+# stores `trader_id`; names/descriptions live here so the web app can render a
+# Quiver-style strategy switcher without a metadata table.
+STRATEGIES = [
+    {
+        "trader_id": "alpha_tilt",
+        "name": "Quiver Alpha — Score Tilt",
+        "short": "Alpha Tilt",
+        "type": "quiver_alpha",
+        "description": "Multifactor score-tilt portfolio (Quiver Alpha).",
+    },
+    {
+        "trader_id": "arjun_etf",
+        "name": "Arjun-Style ETF Rotation",
+        "short": "ETF Rotation",
+        "type": "arjun_etf_rotation",
+        "description": "Kelly-weighted ETF rotation across asset classes.",
+    },
+    {
+        "trader_id": "lowdd_multi_asset",
+        "name": "Low-Drawdown Multi-Asset",
+        "short": "Low DD Multi-Asset",
+        "type": "strategy_native",
+        "description": "Multi-asset allocation tuned for low drawdown.",
+    },
+    {
+        "trader_id": "momentum_surge",
+        "name": "Momentum Surge",
+        "short": "Momentum",
+        "type": "strategy_native",
+        "description": "Top-15 momentum stocks, native strategy.",
+    },
+    {
+        "trader_id": "alpha_generators",
+        "name": "Alpha Generators",
+        "short": "Alpha Gen",
+        "type": "momentum_alpha",
+        "description": "Top-20 momentum alpha candidates.",
+    },
+]
+
+_STRATEGY_META = {s["trader_id"]: s for s in STRATEGIES}
+
 
 def _q(v: Optional[float]) -> Optional[float]:
     """Round a number to 2dp for stable, deterministic output (None-safe)."""
@@ -102,6 +145,32 @@ async def portfolio(strategy: str = "") -> dict[str, Any]:
         )
 
     return {"traders": traders}
+
+
+async def strategies() -> dict[str, Any]:
+    """Roster of known paper strategies with live portfolio summary.
+
+    Merges the static roster metadata (names/descriptions) with each trader's
+    current total equity, day PnL % and holding count from `portfolio()`, so the
+    web app can render a Quiver-style strategy switcher in one call. Only
+    strategies that actually have an account in the DB are returned.
+    """
+    live = await portfolio()
+    by_id = {t["trader_id"]: t for t in live.get("traders", [])}
+    roster = []
+    for meta in STRATEGIES:
+        t = by_id.get(meta["trader_id"])
+        if t is None:
+            continue
+        roster.append(
+            {
+                **meta,
+                "total_equity": t.get("total_equity"),
+                "day_pnl_pct": t.get("day_pnl_pct"),
+                "n_positions": len(t.get("holdings", [])),
+            }
+        )
+    return {"strategies": roster}
 
 
 async def trades(strategy: str = "", limit: int = 20) -> dict[str, Any]:

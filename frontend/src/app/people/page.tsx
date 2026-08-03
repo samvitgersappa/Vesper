@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
+import PageHeader from "../../components/PageHeader";
 
 type Person = Record<string, any>;
 
@@ -36,7 +37,12 @@ export default function People() {
 
   return (
     <>
-      <h1>People</h1>
+      <PageHeader
+        title="Relationships"
+        subtitle="Your network, kept warm — search contacts, review last touches and never let a bond go quiet."
+        accent="var(--people)"
+        accentB="#ff9d6b"
+      />
       {error && <div className="error">{error}</div>}
       <input
         type="search"

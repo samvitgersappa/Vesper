@@ -4,18 +4,22 @@ Daily 00:15 IST plain worker:
 1. `git add/commit/push` the Obsidian vault to the private GitHub repo
    (`VAULT_GIT_REMOTE` in the environment). This alone gives "second brain on
    any device" via GitHub's own app — private repo, free.
-2. Rebuild the Quartz static site if `QUARTZ_DIR` is configured, and refresh the
-   Caddy-served copy at `QUARTZ_OUTPUT`.
+2. Rebuild the Quartz static site and refresh the Caddy-served copy.
 
-Both steps are optional by config: with no `VAULT_GIT_REMOTE` and no
-`QUARTZ_DIR` the job is a successful no-op that logs why. Never fail the worker.
+The Quartz build itself runs inside the `vesper-quartz` container (which has
+Node). The worker has no Node, so step 2 triggers the container's `POST
+/rebuild` endpoint (`QUARTZ_TRIGGER_URL`). Both steps are optional by config:
+with no remote and no trigger the job is a successful no-op that logs why.
+Never fail the worker.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
+import urllib.request
 from datetime import datetime, timezone
 
 logger = logging.getLogger("vesper.automation.vault")
@@ -65,21 +69,25 @@ def vault_backup_publish() -> dict:
     else:
         logger.info("vault_backup_publish: git step skipped (remote unset)")
 
-    quartz = os.environ.get("QUARTZ_DIR", "").strip()
-    out = os.environ.get("QUARTZ_OUTPUT", "").strip()
-    if quartz and out and os.path.isdir(quartz):
+    quartz = os.environ.get("QUARTZ_TRIGGER_URL", "").strip()
+    if quartz:
         try:
-            subprocess.run(
-                ["npx", "quartz", "build", "--directory", quartz, "--output", out],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=600,
+            req = urllib.request.Request(
+                quartz, data=b"{}", method="POST", headers={"Content-Type": "application/json"}
             )
-            result["quartz_rebuilt"] = True
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                body = json.loads(resp.read() or b"{}")
+            if body.get("ok"):
+                result["quartz_rebuilt"] = True
+                result["quartz_detail"] = {
+                    "exit_code": body.get("exitCode"),
+                    "duration_ms": body.get("durationMs"),
+                }
+            else:
+                logger.warning("quartz rebuild reported failure: %s", body.get("output", "")[-500:])
         except Exception as exc:  # pragma: no cover
-            logger.warning("quartz build failed: %s", exc)
+            logger.warning("quartz rebuild trigger failed: %s", exc)
     else:
-        logger.info("vault_backup_publish: quartz step skipped (QUARTZ_DIR=%s)", quartz or "unset")
+        logger.info("vault_backup_publish: quartz step skipped (QUARTZ_TRIGGER_URL unset)")
 
     return result

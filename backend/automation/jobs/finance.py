@@ -219,64 +219,23 @@ async def update_universe() -> dict:
 
 
 async def paper_trade_eod() -> dict:
-    """17:00 IST weekdays — end-of-day accounting for all paper traders.
+    """17:00 IST weekdays — end-of-day paper trading for all 5 traders.
 
-    Recomputes each trader's NAV from holdings and appends a
-    PortfolioNAVUpdated event. Trades from the day are not executed here
-    (the trading pipeline owns execution); this is the EOD mark-to-market the
-    Automation table lists.
+    Runs the full EOD engine (`backend.modules.finance.eod.run_eod`): generate
+    targets per strategy from the factor store, execute orders against cash,
+    update holdings/trades/NAV, and emit TradeExecuted / PortfolioNAVUpdated.
     """
-    try:
-        from sqlalchemy import text
+    from backend.modules.finance.eod import run_eod
 
-        from backend.modules.db import session_factory
-
-        today = pd.Timestamp.now().strftime("%Y-%m-%d")
-        async with session_factory()() as db:
-            accounts = (await db.execute(
-                text("SELECT trader_id, available_cash, settled_cash FROM finance.paper_account")
-            )).all()
-            for acct in accounts:
-                trader_id, cash, _settled = acct[0], acct[1], acct[2]
-                holdings = (await db.execute(
-                    text(
-                        "SELECT ticker, qty, avg_price FROM finance.paper_holdings "
-                        "WHERE trader_id = :tid"
-                    ),
-                    {"tid": trader_id},
-                )).all()
-                holdings_value = sum(float(h[1]) * float(h[2]) for h in holdings)
-                total_equity = float(cash or 0) + holdings_value
-                await db.execute(
-                    text(
-                        "INSERT INTO finance.paper_nav_history "
-                        "(trader_id, date, total_equity, cash, holdings_value, n_positions) "
-                        "VALUES (:tid, :d, :equity, :cash, :hv, :n) "
-                        "ON CONFLICT (trader_id, date) DO UPDATE SET "
-                        "total_equity = EXCLUDED.total_equity, cash = EXCLUDED.cash, "
-                        "holdings_value = EXCLUDED.holdings_value, "
-                        "n_positions = EXCLUDED.n_positions"
-                    ),
-                    {
-                        "tid": trader_id,
-                        "d": today,
-                        "equity": total_equity,
-                        "cash": cash,
-                        "hv": holdings_value,
-                        "n": len(holdings),
-                    },
-                )
-            await db.commit()
-            publish(PORTFOLIO_NAV_UPDATED, {
-                "accounts": len(accounts),
-                "ts": pd.Timestamp.now().isoformat(),
-            })
-        await _record_run("paper_trade_eod", "ok", f"{len(accounts)} accounts marked to market")
-        return {"ok": True, "job": "paper_trade_eod", "accounts": len(accounts)}
-    except Exception as exc:
-        await _record_run("paper_trade_eod", "error", str(exc)[:300])
-        logger.error("paper_trade_eod failed: %s", exc)
-        return {"ok": False, "job": "paper_trade_eod", "error": str(exc)}
+    res = await run_eod()
+    if not res.get("ok"):
+        await _record_run("paper_trade_eod", "degraded", res.get("note", "") or res.get("error", ""))
+        return res
+    n_traders = len(res.get("traders", []))
+    n_trades = res.get("trades", 0)
+    await _record_run("paper_trade_eod", "ok", f"{n_traders} traders, {n_trades} trades executed")
+    res["accounts"] = n_traders
+    return res
 
 
 def _f(v) -> float | None:

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
+import PageHeader from "../../components/PageHeader";
 
 export default function Calendar() {
   const [birthdays, setBirthdays] = useState<any[]>([]);
@@ -26,7 +27,12 @@ export default function Calendar() {
 
   return (
     <>
-      <h1>Calendar</h1>
+      <PageHeader
+        title="Calendar"
+        subtitle="Birthdays and events at a glance — so you never miss the moments that matter."
+        accent="var(--calendar)"
+        accentB="#3ddc97"
+      />
       {error && <div className="error">{error}</div>}
       <div className="grid">
         <div className="card">

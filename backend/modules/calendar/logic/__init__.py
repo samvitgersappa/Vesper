@@ -13,8 +13,9 @@ DB; the DB-backed functions use the shared async session factory
 from datetime import date, datetime, time, timedelta
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
+from backend.db.postgres.schemas.journal.models import DiaryEntry
 from backend.db.postgres.schemas.relationship.models import (
     Person, Interaction, Reminder, LifeEvent,
 )
@@ -254,4 +255,120 @@ async def birthdays() -> dict[str, Any]:
         "window": f"{today.isoformat()}..{end.isoformat()}",
         "birthdays": results,
         "count": len(results),
+    }
+
+
+async def on_this_day(today: str = "") -> dict[str, Any]:
+    """Past events on the same month/day as a given date ("On this day").
+
+    Matches by calendar month/day, ignoring the year:
+
+    - prior-year journal entries (``journal.diary_entries``)
+    - prior-year relationship interactions and life events
+    - birthdays that fall on this month/day (annual, any year)
+
+    Returns items sorted newest-year first. Read-only.
+    """
+    if today:
+        t = parse_iso_date(today)
+        if t is None:
+            return {"error": "invalid date", "message": "Pass an ISO date (YYYY-MM-DD)."}
+    else:
+        t = date.today()
+    month, day = t.month, t.day
+
+    items: list[dict[str, Any]] = []
+
+    async with session_factory()() as db:
+        # Prior-year journal entries on the same month/day.
+        entries = (
+            await db.execute(
+                select(DiaryEntry)
+                .where(
+                    DiaryEntry.entry_date.is_not(None),
+                    func.extract("month", DiaryEntry.entry_date) == month,
+                    func.extract("day", DiaryEntry.entry_date) == day,
+                    func.extract("year", DiaryEntry.entry_date) < t.year,
+                )
+                .order_by(DiaryEntry.entry_date.desc())
+            )
+        ).scalars().all()
+        for e in entries:
+            ed = _as_date(e.entry_date)
+            items.append({
+                "date": ed.isoformat(),
+                "year": ed.year,
+                "type": "journal",
+                "title": e.title or f"Journal entry ({ed.isoformat()})",
+                "source": "journal.diary_entries",
+            })
+
+        # Prior-year interactions on the same month/day.
+        rows = (
+            await db.execute(
+                select(Interaction, Person.name)
+                .join(Person, Interaction.person_id == Person.id)
+                .where(
+                    func.extract("month", Interaction.event_date) == month,
+                    func.extract("day", Interaction.event_date) == day,
+                    func.extract("year", Interaction.event_date) < t.year,
+                )
+                .order_by(Interaction.event_date.desc())
+            )
+        ).all()
+        for inter, name in rows:
+            idt = _as_date(inter.event_date)
+            items.append({
+                "date": idt.isoformat(),
+                "year": idt.year,
+                "type": "interaction",
+                "title": f"{inter.summary or inter.type} with {name}",
+                "source": "relationship.interactions",
+            })
+
+        # Prior-year life events on the same month/day.
+        rows = (
+            await db.execute(
+                select(LifeEvent, Person.name)
+                .join(Person, LifeEvent.person_id == Person.id)
+                .where(
+                    func.extract("month", LifeEvent.event_date) == month,
+                    func.extract("day", LifeEvent.event_date) == day,
+                    func.extract("year", LifeEvent.event_date) < t.year,
+                )
+                .order_by(LifeEvent.event_date.desc())
+            )
+        ).all()
+        for le, name in rows:
+            ld = _as_date(le.event_date)
+            items.append({
+                "date": ld.isoformat(),
+                "year": ld.year,
+                "type": "life_event",
+                "title": f"{le.title} ({name})" if name else le.title,
+                "source": "relationship.life_events",
+            })
+
+        # Birthdays falling on this month/day (annual, current or any year).
+        persons = (
+            await db.execute(select(Person).where(Person.is_archived.is_(False)))
+        ).scalars().all()
+        for p in persons:
+            bday = _as_date(p.birthday)
+            if not bday or (bday.month, bday.day) != (month, day):
+                continue
+            items.append({
+                "date": bday.replace(year=t.year).isoformat(),
+                "year": bday.year,
+                "type": "birthday",
+                "title": f"{p.name}'s birthday",
+                "source": "relationship.persons",
+            })
+
+    items.sort(key=lambda x: (x["year"], x["type"], x["title"]), reverse=True)
+    return {
+        "date": t.isoformat(),
+        "month_day": f"{month:02d}-{day:02d}",
+        "items": items,
+        "count": len(items),
     }

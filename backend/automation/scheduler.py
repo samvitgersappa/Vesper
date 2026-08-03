@@ -11,6 +11,7 @@ Schedules mirror plan.md §12 (IST):
   update_universe 07:30, paper_trade_eod 17:00 Mon-Fri
 - Knowledge Architect Pass: nightly 02:30
 - Graph Analytics: nightly 03:00
+- Graph projection backfill: nightly 03:05 (and once at worker startup)
 - CRM Follow-ups: hourly sweep
 - RSS: weekly (Mon 06:45)
 - Vault Backup & Publish: daily 00:15 (addendum §7)
@@ -50,6 +51,7 @@ JOB_SCHEDULE = {
     "paper_trade_eod": {"trigger": "cron", "hour": 17, "minute": 0, "day_of_week": "mon-fri"},
     "knowledge_architect_pass": {"trigger": "cron", "hour": 2, "minute": 30},
     "graph_analytics_pass": {"trigger": "cron", "hour": 3, "minute": 0},
+    "graph_projection_backfill": {"trigger": "cron", "hour": 3, "minute": 5},
     "crm_followups_sweep": {"trigger": "interval", "hours": 1},
     "rss_process": {"trigger": "cron", "hour": 6, "minute": 45, "day_of_week": "mon"},
     "index_vault_semantic": {"trigger": "cron", "hour": 3, "minute": 15},
@@ -58,6 +60,16 @@ JOB_SCHEDULE = {
     "hermes_mirror": {"trigger": "interval", "minutes": 5},
     "notification_sweep_morning": {"trigger": "cron", "hour": 8, "minute": 0},
     "notification_sweep_evening": {"trigger": "cron", "hour": 18, "minute": 0},
+    # Catalyst Swing Trader (Part E) — 18:00–19:00 IST weekdays.
+    "fetch_catalyst_bhavcopy": {"trigger": "cron", "hour": 18, "minute": 0, "day_of_week": "mon-fri"},
+    "fetch_fii_dii": {"trigger": "cron", "hour": 18, "minute": 5, "day_of_week": "mon-fri"},
+    "fetch_index_pcr": {"trigger": "cron", "hour": 18, "minute": 7, "day_of_week": "mon-fri"},
+    "fetch_sector_indices": {"trigger": "cron", "hour": 18, "minute": 10, "day_of_week": "mon-fri"},
+    "compute_market_breadth": {"trigger": "cron", "hour": 18, "minute": 15, "day_of_week": "mon-fri"},
+    "catalyst_screen": {"trigger": "cron", "hour": 18, "minute": 20, "day_of_week": "mon-fri"},
+    "catalyst_llm": {"trigger": "cron", "hour": 18, "minute": 40, "day_of_week": "mon-fri"},
+    "catalyst_risk": {"trigger": "cron", "hour": 18, "minute": 50, "day_of_week": "mon-fri"},
+    "catalyst_paper_trade": {"trigger": "cron", "hour": 19, "minute": 0, "day_of_week": "mon-fri"},
 }
 
 
@@ -87,7 +99,9 @@ def _register_all() -> None:
     from backend.automation.jobs.finance import (
         fetch_equity, compute_factors, fetch_macro, update_universe, paper_trade_eod,
     )
+    from backend.automation.jobs.catalyst import ALL_JOBS as catalyst_jobs
     from backend.automation.jobs.graph_analytics import graph_analytics_pass
+    from backend.modules.graph.backfill import backfill_graph
     from backend.automation.jobs.knowledge_architect import knowledge_architect_pass
     from backend.automation.jobs.crm_followups import crm_followups_sweep
     from backend.automation.jobs.rss import rss_process
@@ -105,12 +119,14 @@ def _register_all() -> None:
         "paper_trade_eod": paper_trade_eod,
         "knowledge_architect_pass": knowledge_architect_pass,
         "graph_analytics_pass": graph_analytics_pass,
+        "graph_projection_backfill": backfill_graph,
         "crm_followups_sweep": crm_followups_sweep,
         "rss_process": rss_process,
         "index_vault_semantic": index_vault_semantic,
         "journal_questionnaire_deadline": journal_questionnaire_deadline,
         "hermes_mirror": hermes_mirror,
     }
+    jobs.update(catalyst_jobs)
     for name, fn in jobs.items():
         register_data_job(name, JOB_SCHEDULE[name], _asyncio_wrap(fn))
 
@@ -157,13 +173,21 @@ def _start_event_subscribers() -> None:
             logger.warning("graph subscriber stopped: %s", exc)
 
     def _notify_sub():
+        import asyncio
+
         from backend.notification import notify_event
         from backend.events.bus import bus
+
+        async def _run_notify(event: str, payload: dict) -> None:
+            try:
+                await notify_event(event, payload)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("notify_event failed: %s", exc)
 
         try:
             bus.subscribe_multi(
                 ["ReminderDue", "DailyJournalCompleted", "PortfolioNAVUpdated"],
-                notify_event,
+                lambda ev, pl: asyncio.run(_run_notify(ev, pl)),
             )
         except Exception as exc:  # pragma: no cover
             logger.warning("notification subscriber stopped: %s", exc)
@@ -175,5 +199,28 @@ def _start_event_subscribers() -> None:
 def run() -> None:
     """Start the blocking scheduler + event subscribers (worker entrypoint)."""
     _register_all()
+
+    def _bootstrap_graph():
+        """Project any pre-existing source rows on worker start (self-healing)."""
+        import threading
+        from backend.modules.graph.backfill import backfill_graph
+        try:
+            asyncio.run(backfill_graph())
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("startup graph backfill failed: %s", exc)
+
+    threading.Thread(target=_bootstrap_graph, daemon=True).start()
+
+    def _bootstrap_catalyst():
+        """Create the catalyst_swing paper account once (idempotent)."""
+        import threading
+        from backend.automation.jobs.catalyst import ensure_catalyst_account
+        try:
+            asyncio.run(ensure_catalyst_account())
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("startup catalyst account bootstrap failed: %s", exc)
+
+    threading.Thread(target=_bootstrap_catalyst, daemon=True).start()
+
     logger.info("Starting Vesper data scheduler")
     scheduler.start()

@@ -20,6 +20,7 @@ from fastmcp.tools.tool_transform import ArgTransform
 
 from backend.modules.calendar.logic import birthdays as _birthdays
 from backend.modules.calendar.logic import events as _events
+from backend.modules.calendar.logic import on_this_day as _on_this_day
 from backend.modules.db import dispose
 
 mcp = FastMCP("vesper-calendar")
@@ -29,6 +30,12 @@ mcp = FastMCP("vesper-calendar")
 async def birthdays() -> dict:
     """Contacts with a birthday in the next 30 days, sorted by date."""
     return await _birthdays()
+
+
+@mcp.tool()
+async def on_this_day(today: str = "") -> dict:
+    """Past events on the same month/day as a given date ("On this day")."""
+    return await _on_this_day(today)
 
 
 async def _events_impl(from_: str, to: str) -> dict:

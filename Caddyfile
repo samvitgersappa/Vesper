@@ -1,0 +1,43 @@
+# Vesper Caddyfile — serves the static Next.js export, proxies /api to the
+# backend, and serves the Quartz Second Brain at /brain. All traffic stays on
+# the private Tailscale tailnet: set VESPER_DOMAIN to your `*.ts.net` hostname
+# (or any private host) in .env; Caddy auto-provisions certs for public ones.
+
+{
+	# Security header hardening (inert behind Tailscale, cheap to add).
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+	}
+}
+
+{$VESPER_DOMAIN:localhost} {
+	encode gzip
+
+	# API — reverse-proxied to the FastAPI container, same-origin.
+	handle /api/* {
+		reverse_proxy vesper-api:8000
+	}
+	handle /health {
+		reverse_proxy vesper-api:8000
+	}
+
+	# Quartz Second Brain — static site, private.
+	handle_path /brain/* {
+		root * /srv/brain
+		try_files {path} {path}.html {path}/ =404
+		file_server
+		handle_errors {
+			rewrite * /404.html
+			file_server
+		}
+	}
+
+	# Web app (static export).
+	handle {
+		root * /srv
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+}

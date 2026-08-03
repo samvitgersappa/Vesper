@@ -566,3 +566,253 @@ async def complete_day(date_str: str = "", complete: bool = True) -> dict[str, A
         "complete": bool(complete),
         "entry_id": entry_id,
     }
+
+
+# ─── spending analytics (read-only, web dashboard) ─────────────────────────
+
+_SPEND_PERIODS = ("day", "week", "month", "year")
+
+
+def _spend_buckets(period: str, today: date) -> list[tuple[date, date]]:
+    """Return [(start, end_exclusive)] buckets for the trailing window of `period`.
+
+    day   -> last 14 days (today..today-13)
+    week  -> last 12 ISO weeks (Mon..Sun)
+    month -> last 12 months (1st..1st of next)
+    year  -> last 5 years
+    """
+    if period == "day":
+        return [
+            (today - timedelta(days=i), today - timedelta(days=i) + timedelta(days=1))
+            for i in range(13, -1, -1)
+        ]
+    if period == "week":
+        monday = today - timedelta(days=today.weekday())
+        buckets = []
+        for i in range(11, -1, -1):
+            start = monday - timedelta(weeks=i)
+            buckets.append((start, start + timedelta(days=7)))
+        return buckets
+    if period == "month":
+        first = today.replace(day=1)
+        buckets = []
+        for i in range(11, -1, -1):
+            y = first.year
+            m = first.month - i
+            while m <= 0:
+                m += 12
+                y -= 1
+            start = date(y, m, 1)
+            ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+            buckets.append((start, date(ny, nm, 1)))
+        return buckets
+    # year
+    buckets = []
+    for i in range(4, -1, -1):
+        y = today.year - i
+        buckets.append((date(y, 1, 1), date(y + 1, 1, 1)))
+    return buckets
+
+
+def _bucket_label(period: str, start: date) -> str:
+    if period == "day":
+        return start.isoformat()
+    if period == "week":
+        return start.isoformat()
+    if period == "month":
+        return start.strftime("%b %Y")
+    return str(start.year)
+
+
+async def spending_summary(period: str = "week") -> dict[str, Any]:
+    """Aggregate spending into daily/weekly/monthly/yearly buckets (read-only).
+
+    Returns trailing-window buckets with totals, the current period's total and
+    change vs the previous bucket, and overall all-time stats for context.
+    """
+    period = (period or "week").strip().lower()
+    if period not in _SPEND_PERIODS:
+        return {"ok": False, "message": f"invalid period: {period!r} (choose day|week|month|year)"}
+    today = _today()
+    buckets = _spend_buckets(period, today)
+    first = buckets[0][0]
+
+    try:
+        async with session_factory()() as db:
+            rows = (await db.execute(
+                select(Spending)
+                .where(Spending.date >= datetime(first.year, first.month, first.day))
+                .order_by(Spending.date.asc())
+            )).scalars().all()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("spending summary failed: %s", exc)
+        return {"ok": False, "message": str(exc)}
+
+    series = []
+    for start, end in buckets:
+        total = 0.0
+        count = 0
+        for s in rows:
+            sd = s.date.date() if isinstance(s.date, datetime) else s.date
+            if start <= sd < end:
+                total += float(s.amount)
+                count += 1
+        series.append({"label": _bucket_label(period, start), "total": round(total, 2), "count": count})
+
+    current = series[-1]
+    previous = series[-2] if len(series) > 1 else None
+    change_pct = None
+    if previous is not None and previous["total"]:
+        change_pct = round((current["total"] - previous["total"]) / previous["total"] * 100, 1)
+    elif previous is not None:
+        change_pct = 100.0 if current["total"] else 0.0
+
+    total_all = round(sum(s["total"] for s in series), 2)
+    count_all = sum(s["count"] for s in series)
+
+    return {
+        "ok": True,
+        "period": period,
+        "buckets": series,
+        "current": current,
+        "previous": previous,
+        "change_pct": change_pct,
+        "total": total_all,
+        "count": count_all,
+        "avg_per_bucket": round(total_all / len(series), 2) if series else 0.0,
+    }
+
+
+async def spending_analysis() -> dict[str, Any]:
+    """Category breakdown, trends and spending habits (read-only).
+
+    - categories: totals + share per category (fixed taxonomy)
+    - largest: single biggest transaction
+    - monthly_trend: last 6 calendar months totals
+    - weekday_spend: total by weekday (0=Mon)
+    - habits: derived observations (top category, avg txn, repeat frequency)
+    """
+    try:
+        async with session_factory()() as db:
+            rows = (await db.execute(select(Spending))).scalars().all()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("spending analysis failed: %s", exc)
+        return {"ok": False, "message": str(exc)}
+
+    if not rows:
+        return {
+            "ok": True,
+            "total": 0.0,
+            "count": 0,
+            "avg_transaction": 0.0,
+            "categories": [],
+            "largest": None,
+            "monthly_trend": [],
+            "weekday_spend": [],
+            "habits": ["No spending logged yet — capture expenses to see trends."],
+        }
+
+    total = 0.0
+    by_cat: dict[str, dict[str, Any]] = {}
+    largest = None
+    monthly: dict[str, float] = {}
+    weekday: dict[str, float] = {}
+
+    for s in rows:
+        amt = float(s.amount)
+        sd = s.date.date() if isinstance(s.date, datetime) else s.date
+        cat = s.category or "Other"
+        total += amt
+        c = by_cat.setdefault(cat, {"total": 0.0, "count": 0})
+        c["total"] += amt
+        c["count"] += 1
+        if largest is None or amt > largest["amount"]:
+            largest = {"amount": amt, "category": cat, "date": sd.isoformat()}
+        monthly[f"{sd.year}-{sd.month:02d}"] = monthly.get(f"{sd.year}-{sd.month:02d}", 0.0) + amt
+        wd = sd.strftime("%a")
+        weekday[wd] = weekday.get(wd, 0.0) + amt
+
+    categories = sorted(
+        [
+            {
+                "category": k,
+                "total": round(v["total"], 2),
+                "count": v["count"],
+                "share_pct": round(v["total"] / total * 100, 1) if total else 0.0,
+            }
+            for k, v in by_cat.items()
+        ],
+        key=lambda x: x["total"],
+        reverse=True,
+    )
+
+    monthly_trend = [
+        {"month": k, "total": round(v, 2)}
+        for k, v in sorted(monthly.items())[-6:]
+    ]
+
+    weekday_spend = [
+        {"day": d, "total": round(weekday.get(d, 0.0), 2)}
+        for d in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    ]
+
+    count = len(rows)
+    avg = total / count if count else 0.0
+    top = categories[0] if categories else None
+
+    habits: list[str] = []
+    if top and top["share_pct"] >= 30:
+        habits.append(f"{top['category']} dominates spending at {top['share_pct']}% of total.")
+    if len(categories) >= 3:
+        habits.append(f"{len(categories)} categories active; largest is {categories[0]['category']}.")
+    habits.append(f"Average transaction is ₹{avg:,.0f} across {count} logged expenses.")
+    if largest:
+        habits.append(f"Biggest single expense: ₹{largest['amount']:,.0f} on {largest['date']} ({largest['category']}).")
+    if monthly_trend:
+        first_m = monthly_trend[0]["total"]
+        last_m = monthly_trend[-1]["total"]
+        if first_m and last_m:
+            trend = (last_m - first_m) / first_m * 100
+            habits.append(f"Monthly spending moved {trend:+.0f}% across the last 6 months.")
+    weekday_sorted = sorted(weekday_spend, key=lambda x: x["total"], reverse=True)
+    if weekday_sorted and weekday_sorted[0]["total"] > 0:
+        habits.append(f"Highest spending day: {weekday_sorted[0]['day']}.")
+
+    return {
+        "ok": True,
+        "total": round(total, 2),
+        "count": count,
+        "avg_transaction": round(avg, 2),
+        "categories": categories,
+        "largest": largest,
+        "monthly_trend": monthly_trend,
+        "weekday_spend": weekday_spend,
+        "habits": habits,
+    }
+
+
+async def spending_transactions(limit: int = 50) -> dict[str, Any]:
+    """Recent spending transactions, newest first (read-only)."""
+    limit = max(1, min(int(limit), 500))
+    try:
+        async with session_factory()() as db:
+            rows = (await db.execute(
+                select(Spending).order_by(Spending.date.desc()).limit(limit)
+            )).scalars().all()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("spending transactions failed: %s", exc)
+        return {"ok": False, "message": str(exc)}
+
+    return {
+        "ok": True,
+        "transactions": [
+            {
+                "id": s.id,
+                "date": (s.date.date() if isinstance(s.date, datetime) else s.date).isoformat(),
+                "amount": float(s.amount),
+                "category": s.category or "Other",
+                "raw_text": s.raw_text,
+            }
+            for s in rows
+        ],
+    }

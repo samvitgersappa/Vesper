@@ -40,7 +40,8 @@ Vesper unifies three existing codebases into one Personal Intelligence OS:
 
 ```
 vesper/
-├── docker-compose.yml        # postgres, redis, caddy, vesper-api, vesper-worker
+├── docker-compose.yml        # postgres, redis, caddy, vesper-api, vesper-worker, vesper-quartz
+├── Caddyfile                 # web app + /api proxy + Quartz garden, behind Tailscale
 ├── start.sh                  # one-command idempotent bootstrap
 ├── .env.example              # every environment variable the code reads
 ├── plan.md                   # architecture authority (read this first)
@@ -49,6 +50,9 @@ vesper/
 ├── backend/
 │   ├── main.py               # single FastAPI app; APP_MODE=api|worker
 │   ├── modules/<name>/       # one MCP server per module + logic/ (ported logic)
+│   │   ├── activity/         # live feed of real writes (hermes, journal, finance, …)
+│   │   ├── graph/            # universal graph: write adapter + self-healing backfill
+│   │   └── ipo/              # IPO calendar (curated sample until a live feed lands)
 │   ├── events/               # Redis pub/sub bus + event catalog (bus.py, catalog.py)
 │   ├── automation/           # plain-data job scheduler (scheduler.py + jobs/)
 │   ├── db/                   # Postgres schemas, alembic, DuckDB, LanceDB
@@ -59,6 +63,12 @@ vesper/
 │   ├── api/routers.py        # REST surface for the web dashboard
 │   ├── notification/         # Telegram-only notification triage + delivery
 │   └── config/               # settings.yaml, secrets.env.example
+├── quartz/                   # Vesper Second Brain — Quartz v5 private garden
+│   ├── Dockerfile            # node:24 image with the Quartz v5 template baked in
+│   ├── quartz.config.yaml    # graph, search, backlinks, explorer (private, no analytics)
+│   ├── rebuild.sh            # vault sync + frontmatter sanitize + build
+│   ├── server.mjs            # POST /rebuild trigger + static server
+│   └── sanitize.sh           # fixes `[[key]]:` frontmatter in the build copy only
 ├── hermes-config/            # configures the adopted Hermes Agent (NOT its source)
 │   ├── mcp_servers.json      # 8 module MCP servers (host-path template)
 │   ├── sync_mcp.py           # merges the template into ~/.hermes/config.yaml
@@ -69,7 +79,9 @@ vesper/
 │   │                         # Evening/Weekly/Monthly Review, Knowledge Architect
 │   └── memory/               # TencentDB Agent Memory plugin config (L0–L3)
 ├── frontend/                 # Next.js 15 app — static export served by Caddy
-│   ├── app/                  # dashboard, graph, people, journal, finance, study, calendar
+│   ├── app/                  # overview, graph, people, journal, finance, spending, ipo,
+│   │   └─                     # study, calendar (+ live activity feed on the dashboard)
+│   ├── components/           # Nav, PageHeader, LiveActivity
 │   └── out/                  # build output (git-ignored; produced by start.sh)
 ├── tests/                    # Phase 10 integration tests (pytest, needs the stack up)
 └── backend/data/raw/         # ind_nifty500list.csv — the bundled Nifty-500 universe
@@ -95,6 +107,7 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 | DuckDB | `quiver.duckdb` | Analytical feature store — `equity_daily`, `macro_series`, `factor_features`, `index_membership`, `symbol_mapping` |
 | LanceDB | `data/lancedb` | Semantic index over the Obsidian vault (local TF-IDF, no external embedding API) |
 | Obsidian vault | `~/Documents/KnowledgeVault` | Source of truth for journal + knowledge notes (`00 Journal/`, `03 Knowledge/`, …) |
+| Quartz | `vesper-quartz` container | Builds the vault into a private static garden (graph, search, backlinks) served at `/brain` |
 | Hermes state | `~/.hermes/state.db` | Hermes Agent's own SQLite (tool-call/usage mirror source) |
 
 ## Scheduled jobs (APScheduler worker)
@@ -108,11 +121,12 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 | `paper_trade_eod` | 17:00 Mon–Fri | End-of-day mark-to-market for all paper traders → `paper_nav_history` |
 | `knowledge_architect_pass` | 02:30 daily | Vault re-org / consolidation pass |
 | `graph_analytics_pass` | 03:00 daily | Community detection + relationship analytics → `graph_snapshots` |
+| `graph_projection_backfill` | 03:05 daily | Rebuilds `graph_nodes`/`edges` from the real source tables (also runs once at worker startup) |
 | `index_vault_semantic` | 03:15 daily | Rebuilds the LanceDB semantic index from the vault |
 | `crm_followups_sweep` | every 1h | Due reminder follow-up sweep |
 | `rss_process` | 06:45 Mon | Routes RSS feeds through `knowledge.capture` |
 | `journal_questionnaire_deadline` | 23:55 daily | Guarantees a journal record exists before midnight |
-| `vault_backup_publish` | 00:15 daily | Pushes the Obsidian vault to a private GitHub repo (+ optional Quartz rebuild) |
+| `vault_backup_publish` | 00:15 daily | Pushes the Obsidian vault to a private GitHub repo + triggers the Quartz garden rebuild |
 | `hermes_mirror` | every 5m | Mirrors Hermes tool-calls/usage into the `hermes` Postgres schema |
 | `notification_sweep_morning` | 08:00 daily | Morning Telegram digest |
 | `notification_sweep_evening` | 18:00 daily | Evening Telegram digest |

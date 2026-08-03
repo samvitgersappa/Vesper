@@ -19,23 +19,33 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 
+from backend.modules.activity.logic import recent as activity_recent
 from backend.modules.calendar.logic import birthdays as calendar_birthdays
 from backend.modules.calendar.logic import events as calendar_events
 from backend.modules.finance.logic import nav as finance_nav
 from backend.modules.finance.logic import portfolio as finance_portfolio
 from backend.modules.finance.logic import signals as finance_signals
+from backend.modules.finance.logic import strategies as finance_strategies
 from backend.modules.finance.logic import trades as finance_trades
+from backend.modules.finance.eod import mark_to_market as finance_mark_to_market
+from backend.modules.finance.eod import run_eod as finance_run_eod
 from backend.modules.graph.logic import analytics as graph_analytics
 from backend.modules.graph.logic import community as graph_community
 from backend.modules.graph.logic import edges as graph_edges
 from backend.modules.graph.logic import nodes as graph_nodes
 from backend.modules.hobbies.logic import get_person_hobbies, list_all as hobbies_list_all
+from backend.modules.ipo.logic import list_all as ipo_list_all
+from backend.modules.ipo.logic import list_recent as ipo_list_recent
+from backend.modules.ipo.logic import list_upcoming as ipo_list_upcoming
 from backend.modules.journal.logic import get_entry as journal_get_entry
 from backend.modules.journal.logic import get_mood_streak as journal_get_mood_streak
 from backend.modules.journal.logic import log_expense as journal_log_expense
 from backend.modules.journal.logic import log_workout as journal_log_workout
 from backend.modules.journal.logic import read_entry as journal_read_entry
 from backend.modules.journal.logic import resolve as journal_resolve
+from backend.modules.journal.logic import spending_analysis as journal_spending_analysis
+from backend.modules.journal.logic import spending_summary as journal_spending_summary
+from backend.modules.journal.logic import spending_transactions as journal_spending_transactions
 from backend.modules.journal.logic import update_entry as journal_update_entry
 from backend.modules.journal.logic import write_entry as journal_write_entry
 from backend.modules.knowledge.logic import knowledge_recall_everything
@@ -99,6 +109,22 @@ async def api_journal_streak():
     return await journal_get_mood_streak()
 
 
+# ── Spending ───────────────────────────────────────────────────────────────
+@router.get("/spending/summary")
+async def api_spending_summary(period: str = "week"):
+    return await journal_spending_summary(period)
+
+
+@router.get("/spending/analysis")
+async def api_spending_analysis():
+    return await journal_spending_analysis()
+
+
+@router.get("/spending/transactions")
+async def api_spending_transactions(limit: int = 50):
+    return await journal_spending_transactions(limit)
+
+
 # ── Study ─────────────────────────────────────────────────────────────────
 @router.get("/study/tests")
 async def api_study_tests():
@@ -126,6 +152,28 @@ async def api_hobbies():
     return await hobbies_list_all()
 
 
+# ── Activity feed (what the system actually writes) ───────────────────────
+@router.get("/activity/recent")
+async def api_activity_recent(limit: int = 80):
+    return await activity_recent(limit=min(limit, 200))
+
+
+# ── IPO calendar (curated dataset) ───────────────────────────────────────
+@router.get("/ipo/all")
+async def api_ipo_all():
+    return await ipo_list_all()
+
+
+@router.get("/ipo/upcoming")
+async def api_ipo_upcoming():
+    return await ipo_list_upcoming()
+
+
+@router.get("/ipo/recent")
+async def api_ipo_recent():
+    return await ipo_list_recent()
+
+
 # ── Calendar ──────────────────────────────────────────────────────────────
 @router.get("/calendar/birthdays")
 async def api_calendar_birthdays():
@@ -134,10 +182,27 @@ async def api_calendar_birthdays():
 
 @router.get("/calendar/events")
 async def api_calendar_events(from_date: str = "", to_date: str = ""):
-    return await calendar_events(from_date, to_date)
+    # Web dashboard friendly: default to today..next-30-days so the page works
+    # without params (the MCP tool keeps its strict range contract).
+    return await calendar_events(from_date or "today", to_date or "month")
 
 
 # ── Finance (read-only, plan §16) ─────────────────────────────────────────
+@router.get("/finance/strategies")
+async def api_finance_strategies():
+    return await finance_strategies()
+
+
+@router.post("/finance/run-eod")
+async def api_finance_run_eod():
+    return await finance_run_eod()
+
+
+@router.post("/finance/mark-to-market")
+async def api_finance_mark_to_market():
+    return await finance_mark_to_market()
+
+
 @router.get("/finance/portfolio")
 async def api_finance_portfolio(strategy: str = ""):
     return await finance_portfolio(strategy)
@@ -165,8 +230,8 @@ async def api_graph_nodes(entity_type: str = "", limit: int = 500):
 
 
 @router.get("/graph/edges")
-async def api_graph_edges(limit: int = 1000):
-    return await graph_edges(limit)
+async def api_graph_edges(entity_type: str = "", limit: int = 1000):
+    return await graph_edges(entity_type, limit=limit)
 
 
 @router.get("/graph/analytics")

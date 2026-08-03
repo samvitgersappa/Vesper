@@ -913,6 +913,159 @@ async def relationship_delete_person(person_id: str) -> dict[str, Any]:
     return result
 
 
+# ─── Draft message composer (Part D) ─────────────────────────────────
+
+_DRAFT_PURPOSE_ALIASES = {
+    "reconnect": "reconnect",
+    "follow_up": "follow_up",
+    "followup": "follow_up",
+    "congrats": "congrats",
+    "congratulate": "congrats",
+    "celebration": "congrats",
+    "check_in": "check_in",
+    "checkin": "check_in",
+    "custom": "custom",
+    "freeform": "custom",
+}
+VALID_DRAFT_PURPOSES = {"reconnect", "follow_up", "congrats", "check_in", "custom"}
+
+
+async def relationship_draft_message(
+    person_id: str,
+    purpose: str = "reconnect",
+    context: str = "",
+) -> dict[str, Any]:
+    """Compose a draft message for a person WITHOUT sending anything.
+
+    Deterministic template composer (no LLM), using the person's real CRM
+    context (last interaction, open follow-ups, recent life events).
+
+    `purpose` picks the angle:
+    - ``reconnect``  — rekindle after a gap, referencing the last interaction.
+    - ``follow_up``  — chase an open follow-up from a prior interaction.
+    - ``congrats``   — congratulate on the most recent life event.
+    - ``check_in``   — light, no-pretext touch.
+    - ``custom``     — free-form; ``context`` is embedded verbatim.
+
+    This tool NEVER sends anything. The returned draft is marked
+    ``requires_approval: true`` — a real send is a separate, human-mediated
+    action outside this module (approvals-style, cf. Hermes
+    ``destructive_slash_confirm``).
+    """
+    raw = (purpose or "").strip().lower()
+    purpose = _DRAFT_PURPOSE_ALIASES.get(raw, raw)
+    if purpose not in VALID_DRAFT_PURPOSES:
+        return {
+            "found": False,
+            "error": "invalid_purpose",
+            "message": "purpose must be one of: reconnect, follow_up, congrats, check_in, custom",
+        }
+
+    async with session_factory()() as db:
+        p = await db.get(Person, person_id)
+        if not p:
+            return {"found": False, "message": f"No person with id {person_id}"}
+
+        last = (
+            await db.execute(
+                select(Interaction).where(Interaction.person_id == person_id)
+                .order_by(Interaction.event_date.desc()).limit(1)
+            )
+        ).scalar_one_or_none()
+        open_fu = (
+            await db.execute(
+                select(Interaction).where(
+                    Interaction.person_id == person_id,
+                    Interaction.follow_up_needed == True,  # noqa: E712
+                ).order_by(Interaction.event_date.desc()).limit(1)
+            )
+        ).scalar_one_or_none()
+        recent_events = (
+            await db.execute(
+                select(LifeEvent).where(LifeEvent.person_id == person_id)
+                .order_by(LifeEvent.event_date.desc()).limit(1)
+            )
+        ).scalars().all()
+
+    first = (p.name or "there").split(" ")[0].strip() or "there"
+    recent_event = recent_events[0] if recent_events else None
+
+    if purpose == "custom":
+        if not (context or "").strip():
+            return {
+                "found": False,
+                "error": "context_required",
+                "message": "purpose 'custom' requires a non-empty `context` to embed in the draft.",
+            }
+        body = f"Hey {first},\n\n{context.strip()}"
+    elif purpose == "follow_up" and open_fu and (open_fu.follow_up_note or open_fu.summary):
+        subject = open_fu.follow_up_note or open_fu.summary
+        date_str = open_fu.event_date.strftime("%b %d, %Y")
+        body = (
+            f"Hey {first}, following up on our conversation on {date_str} — "
+            f"you mentioned: {subject.strip()}. I'd love to close the loop on that. "
+            f"Let me know what works for you."
+        )
+    elif purpose == "follow_up":
+        body = (
+            f"Hey {first}, I wanted to follow up — nothing specific flagged on my end, "
+            f"just checking in to see how you're doing."
+        )
+    elif purpose == "congrats" and recent_event:
+        body = (
+            f"Hey {first}, congratulations on {recent_event.title.strip()}! "
+            f"That's fantastic news. Would love to hear all about it when you have a moment."
+        )
+    elif purpose == "congrats":
+        body = (
+            f"Hey {first}, just wanted to send a quick note of congratulations — "
+            f"whatever you've got going on, I'm cheering for you."
+        )
+    elif purpose == "check_in":
+        body = (
+            f"Hey {first}, just checking in — no reason in particular. "
+            f"Hope everything's going well on your end. Would be great to catch up soon."
+        )
+    else:  # reconnect
+        if last and last.event_date:
+            date_str = last.event_date.strftime("%b %d, %Y")
+            topic = (last.summary or "our last chat").strip()
+            body = (
+                f"Hey {first}, it's been a while since we last caught up "
+                f"({date_str}) — I was thinking about {topic}. "
+                f"How have you been? Would love to reconnect soon."
+            )
+        else:
+            body = (
+                f"Hey {first}, it's been too long since we last talked. "
+                f"I'd love to catch up and hear what you've been up to. How are things?"
+            )
+
+    return {
+        "found": True,
+        "draft": body,
+        "person": {"id": p.id, "name": p.name},
+        "purpose": purpose,
+        "context_used": {
+            "last_interaction": (
+                {"date": last.event_date.strftime("%Y-%m-%d"), "summary": last.summary}
+                if last else None
+            ),
+            "open_follow_up": (
+                {"date": open_fu.event_date.strftime("%Y-%m-%d"), "note": open_fu.follow_up_note}
+                if open_fu else None
+            ),
+            "recent_life_event": (
+                {"date": recent_event.event_date.strftime("%Y-%m-%d"), "title": recent_event.title}
+                if recent_event else None
+            ),
+        },
+        "requires_approval": True,
+        "status": "draft_only",
+        "note": "Draft only — nothing was sent. Sending requires human approval outside this module.",
+    }
+
+
 # ─── Date parsing helpers ───────────────────────────────────────────
 
 def _parse_datetime(s: str) -> Optional[datetime]:

@@ -22,6 +22,7 @@ from backend.modules.finance.logic import (
     signals as _signals,
     trades as _trades,
 )
+from backend.modules.finance.logic import catalyst as _catalyst
 
 mcp = FastMCP("vesper-finance")
 
@@ -48,6 +49,36 @@ async def signals(strategy: str = "", limit: int = 20) -> dict:
 async def nav(strategy: str = "", limit: int = 60) -> dict:
     """Latest NAV series per trader. Read-only."""
     return await _nav(strategy, limit)
+
+
+@mcp.tool()
+async def catalyst_scores(date: str = "", limit: int = 50) -> dict:
+    """Catalyst swing-trader scores (Layer 1/2/3 + composite), best first. Read-only."""
+    return await _catalyst.scores(date or None, limit)
+
+
+@mcp.tool()
+async def catalyst_candidates(date: str = "", limit: int = 100) -> dict:
+    """Catalyst swing-trader watchlist funnel log. Read-only."""
+    return await _catalyst.candidates(date or None, limit)
+
+
+@mcp.tool()
+async def catalyst_positions() -> dict:
+    """Open catalyst swing positions with stop/target bookkeeping. Read-only."""
+    return await _catalyst.positions()
+
+
+@mcp.tool()
+async def catalyst_usage(limit: int = 30) -> dict:
+    """Catalyst LLM daily budget usage + recent audit trail. Read-only."""
+    return await _catalyst.usage(limit)
+
+
+@mcp.tool()
+async def catalyst_cost_gate(date: str = "", limit: int = 50) -> dict:
+    """Recent catalyst cost-gate estimates (slippage vs target PnL). Read-only."""
+    return await _catalyst.cost_gate(date or None, limit)
 
 
 def main() -> None:

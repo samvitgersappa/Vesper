@@ -14,10 +14,26 @@ import os
 APP_MODE = os.environ.get("APP_MODE", "api")
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routers import router as api_router
 
+# CORS for local development (Next.js dev server on :3000 calling the API on
+# :8000). In production Caddy proxies the API same-origin, so this is inert —
+# but broad allows are fine here because the API holds no cookies/sessions.
+_ALLOWED_ORIGINS = os.environ.get(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1",
+).split(",")
+
 app = FastAPI(title="Vesper", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _ALLOWED_ORIGINS if o.strip()],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(api_router)
 
 

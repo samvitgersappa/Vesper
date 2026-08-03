@@ -22,6 +22,7 @@ from backend.modules.relationship.logic import (
     relationship_add_reminder as _add_reminder,
     relationship_create_person as _create_person,
     relationship_delete_person as _delete_person,
+    relationship_draft_message as _draft_message,
     relationship_get_bridge_contacts as _get_bridge_contacts,
     relationship_get_communities as _get_communities,
     relationship_get_due_today as _get_due_today,
@@ -166,6 +167,20 @@ async def add_reminder(
 async def delete_person(person_id: str) -> dict:
     """Soft-delete a contact (is_archived=True)."""
     return await _delete_person(person_id)
+
+
+@mcp.tool()
+async def draft_message(
+    person_id: str,
+    purpose: str = "reconnect",
+    context: str = "",
+) -> dict:
+    """Draft a message for a contact (reconnect/follow_up/congrats/check_in/custom).
+
+    DRAFT-ONLY — never sends anything. The returned draft requires human
+    approval before any real send happens (approvals-style).
+    """
+    return await _draft_message(person_id, purpose, context)
 
 
 def main() -> None:

@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from backend.db.base import Base, _now
+from backend.db.base import Base, _now, new_uuid
 
 SCHEMA = "finance"
 
@@ -279,3 +279,181 @@ class DivergenceMetric(Base):
     prediction_error: Mapped[Optional[float]] = mapped_column(Float, default=0.0)
     drift: Mapped[Optional[float]] = mapped_column(Float, default=0.0)
     alert: Mapped[Optional[str]] = mapped_column(Text, default="")
+
+
+# ── Catalyst Swing Trader (Part E) ─────────────────────────────────────
+# Trader 6 ("catalyst_swing"). Storage tables for the data-acquisition
+# pipeline (NSE bhavcopy/delivery, FII/DII, index PCR, sector indices,
+# breadth) plus the Layer 1/2/3 scoring, LLM catalyst funnel, cost gate and
+# swing-position state. All writes go through the worker/scheduler jobs —
+# the Finance MCP/API layer stays read-only (plan §16).
+
+
+class DeliveryStats(Base):
+    """NSE Common Bhavcopy delivery data (delivery_stats)."""
+    __tablename__ = "delivery_stats"
+    __table_args__ = (
+        PrimaryKeyConstraint("date", "symbol", name="pk_delivery_stats"),
+        {"schema": SCHEMA},
+    )
+
+    date: Mapped[str] = mapped_column(String(20), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False)
+    total_qty: Mapped[Optional[int]] = mapped_column(Integer)
+    total_val: Mapped[Optional[float]] = mapped_column(Float)
+    delivery_qty: Mapped[Optional[int]] = mapped_column(Integer)
+    delivery_pct: Mapped[Optional[float]] = mapped_column(Float)  # DELIV_PER
+
+
+class MarketSentimentDaily(Base):
+    """FII/DII provisional net flows (market_sentiment_daily)."""
+    __tablename__ = "market_sentiment_daily"
+    __table_args__ = (
+        PrimaryKeyConstraint("date", "actor", name="pk_market_sentiment_daily"),
+        {"schema": SCHEMA},
+    )
+
+    date: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor: Mapped[str] = mapped_column(String(20), nullable=False)  # FII | DII
+    buy: Mapped[Optional[float]] = mapped_column(Float)
+    sell: Mapped[Optional[float]] = mapped_column(Float)
+    net: Mapped[Optional[float]] = mapped_column(Float)
+
+
+class IndexOptionsSentiment(Base):
+    """Nifty/BankNifty index put-call ratio (index_options_sentiment)."""
+    __tablename__ = "index_options_sentiment"
+    __table_args__ = (
+        PrimaryKeyConstraint("date", "index_name", name="pk_index_options_sentiment"),
+        {"schema": SCHEMA},
+    )
+
+    date: Mapped[str] = mapped_column(String(20), nullable=False)
+    index_name: Mapped[str] = mapped_column(String(20), nullable=False)  # NIFTY | BANKNIFTY
+    pcr: Mapped[Optional[float]] = mapped_column(Float)
+    ce_oi: Mapped[Optional[float]] = mapped_column(Float)
+    pe_oi: Mapped[Optional[float]] = mapped_column(Float)
+
+
+class MarketBreadthDaily(Base):
+    """Breadth computed from equity_daily (market_breadth_daily)."""
+    __tablename__ = "market_breadth_daily"
+    __table_args__ = {"schema": SCHEMA}
+
+    date: Mapped[str] = mapped_column(String(20), primary_key=True)
+    advance: Mapped[Optional[int]] = mapped_column(Integer)
+    decline: Mapped[Optional[int]] = mapped_column(Integer)
+    pct_above_50dma: Mapped[Optional[float]] = mapped_column(Float)
+    pct_above_200dma: Mapped[Optional[float]] = mapped_column(Float)
+    highs_52w: Mapped[Optional[int]] = mapped_column(Integer)
+    lows_52w: Mapped[Optional[int]] = mapped_column(Integer)
+
+
+class SectorScoreDaily(Base):
+    """Per-sector momentum/trend scores (sector_scores_daily)."""
+    __tablename__ = "sector_scores_daily"
+    __table_args__ = (
+        PrimaryKeyConstraint("date", "sector", name="pk_sector_scores_daily"),
+        {"schema": SCHEMA},
+    )
+
+    date: Mapped[str] = mapped_column(String(20), nullable=False)
+    sector: Mapped[str] = mapped_column(String(50), nullable=False)
+    ret_20d: Mapped[Optional[float]] = mapped_column(Float)
+    dma_50: Mapped[Optional[float]] = mapped_column(Float)
+    momentum: Mapped[Optional[float]] = mapped_column(Float)
+    score: Mapped[Optional[float]] = mapped_column(Float)  # 0..1 normalized
+
+
+class CatalystScore(Base):
+    """Layer 1/2/3 + composite + LLM catalyst per symbol/day (catalyst_scores)."""
+    __tablename__ = "catalyst_scores"
+    __table_args__ = (
+        PrimaryKeyConstraint("date", "symbol", name="pk_catalyst_scores"),
+        {"schema": SCHEMA},
+    )
+
+    date: Mapped[str] = mapped_column(String(20), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False)
+    sector: Mapped[Optional[str]] = mapped_column(String(50))
+    market_score: Mapped[Optional[float]] = mapped_column(Float)
+    sector_score: Mapped[Optional[float]] = mapped_column(Float)
+    stock_score: Mapped[Optional[float]] = mapped_column(Float)
+    composite_score: Mapped[Optional[float]] = mapped_column(Float)
+    rank: Mapped[Optional[int]] = mapped_column(Integer)
+    catalyst_json: Mapped[Optional[str]] = mapped_column(Text)
+    catalyst_signal: Mapped[Optional[str]] = mapped_column(String(20))  # positive | negative | none
+    llm_analyzed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class CatalystCandidate(Base):
+    """Watchlist-funnel log entry (catalyst_candidates)."""
+    __tablename__ = "catalyst_candidates"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    date: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False)
+    stage: Mapped[str] = mapped_column(String(20), nullable=False)  # market|sector|stock|llm|entered|rejected|expired
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    score: Mapped[Optional[float]] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(20), default="open")
+
+
+class CatalystLlmUsage(Base):
+    """Daily LLM-call counter (catalyst_llm_usage), capped per day."""
+    __tablename__ = "catalyst_llm_usage"
+    __table_args__ = {"schema": SCHEMA}
+
+    date: Mapped[str] = mapped_column(String(20), primary_key=True)
+    calls_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class CatalystLlmCall(Base):
+    """Per-call audit log (catalyst_llm_calls)."""
+    __tablename__ = "catalyst_llm_calls"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[str] = mapped_column(String(40), nullable=False)
+    date: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[Optional[str]] = mapped_column(String(100))
+    response_json: Mapped[Optional[str]] = mapped_column(Text)
+    ok: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class CatalystPosition(Base):
+    """Swing-position state for exits (catalyst_positions)."""
+    __tablename__ = "catalyst_positions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False)
+    entry_date: Mapped[str] = mapped_column(String(20), nullable=False)
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False)
+    atr: Mapped[Optional[float]] = mapped_column(Float)
+    stop_loss: Mapped[Optional[float]] = mapped_column(Float)
+    trailing_stop: Mapped[Optional[float]] = mapped_column(Float)
+    target: Mapped[Optional[float]] = mapped_column(Float)
+    days_held: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open | closed
+    exit_reason: Mapped[Optional[str]] = mapped_column(Text)
+    exit_date: Mapped[Optional[str]] = mapped_column(String(20))
+
+
+class CatalystCostEstimate(Base):
+    """Per-candidate cost estimates for the cost gate (catalyst_cost_estimates)."""
+    __tablename__ = "catalyst_cost_estimates"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[str] = mapped_column(String(20), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False)
+    notional: Mapped[Optional[float]] = mapped_column(Float)
+    expected_slippage_bps: Mapped[Optional[float]] = mapped_column(Float)
+    estimated_cost: Mapped[Optional[float]] = mapped_column(Float)
+    target_pnl: Mapped[Optional[float]] = mapped_column(Float)
+    cost_target_ratio: Mapped[Optional[float]] = mapped_column(Float)
+    gate_passed: Mapped[Optional[bool]] = mapped_column(Boolean)

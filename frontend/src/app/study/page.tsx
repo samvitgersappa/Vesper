@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
+import PageHeader from "../../components/PageHeader";
 
 export default function Study() {
   const [readiness, setReadiness] = useState<any>(null);
@@ -26,13 +27,24 @@ export default function Study() {
 
   return (
     <>
-      <h1>Study</h1>
+      <PageHeader
+        title="Learning"
+        subtitle="Exam readiness and your revision pipeline — know exactly how prepared you are before test day."
+        accent="var(--study)"
+        accentB="#9d7bff"
+      />
       {error && <div className="error">{error}</div>}
       <div className="grid">
         <div className="card">
-          <h2>Exam readiness</h2>
-          <div className="big">{readiness?.readiness ?? "—"}%</div>
-          <div className="muted">{readiness?.target_date ?? ""}</div>
+          <h2>Exam Readiness</h2>
+          <div className="big grad" style={{ "--big-a": "#5b8cff", "--big-b": "#9d7bff" } as React.CSSProperties}>
+            {readiness?.readiness && readiness.readiness !== "no_data"
+              ? `${readiness.readiness}%`
+              : "—"}
+          </div>
+          <div className="muted">
+            {readiness?.message ?? readiness?.target_date ?? ""}
+          </div>
         </div>
         <div className="card">
           <h2>Tests ({tests.length})</h2>
