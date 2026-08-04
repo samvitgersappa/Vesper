@@ -85,24 +85,36 @@ def write_hermes_env(env_path: Path) -> None:
         "OPENAI_API_KEY",
     ]
     lines = []
+    seen: set = set()
     if env_path.exists():
-        seen = set()
         for line in env_path.read_text(encoding="utf-8").splitlines():
+            k = ""
             if line and not line.startswith("#") and "=" in line:
                 k = line.split("=", 1)[0].strip()
                 seen.add(k)
-                # keep existing values unless the project has a non-empty one
+                # Replace any wanted key whose project value is non-empty.
                 if k in wanted and project.get(k):
-                    continue  # replaced below
+                    continue  # re-added below with the fresh value
             lines.append(line)
     else:
-        seen = set()
         env_path.parent.mkdir(parents=True, exist_ok=True)
 
     for k in wanted:
-        if project.get(k) and k not in seen:
+        if project.get(k):
             lines.append(f"{k}={project[k]}")
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Drop duplicate keys (keep the last occurrence = the fresh value above).
+    merged: list[str] = []
+    final_seen: set = set()
+    for line in lines:
+        k = ""
+        if line and not line.startswith("#") and "=" in line:
+            k = line.split("=", 1)[0].strip()
+            if k in wanted and k in final_seen:
+                continue  # already replaced with the fresh value
+        if k:
+            final_seen.add(k)
+        merged.append(line)
+    env_path.write_text("\n".join(merged) + "\n", encoding="utf-8")
     log(f"secrets mirrored into {env_path}")
 
 

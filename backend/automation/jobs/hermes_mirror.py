@@ -135,7 +135,7 @@ async def _mirror_usage() -> int:
                 session_id=r[0],
                 model=r[1],
                 provider=r[2],
-                input_tokens=r[3] or 0,
+                prompt_tokens=r[3] or 0,
                 completion_tokens=r[4] or 0,
                 total_tokens=(r[3] or 0) + (r[4] or 0),
                 cost_usd=r[7],
