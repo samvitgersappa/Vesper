@@ -14,7 +14,12 @@ downstream projection and must never raise across the loop.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import threading
+import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -177,6 +182,59 @@ async def _on_knowledge(payload: dict) -> None:
             await db.commit()
     except Exception as exc:  # pragma: no cover
         logger.warning("graph knowledge adapter failed: %s", exc)
+
+    # Reactive garden refresh: after any note write, rebuild the Quartz garden
+    # (debounced) so new notes appear promptly instead of only at the nightly
+    # vault_backup_publish job. Cheap no-op when QUARTZ_TRIGGER_URL is unset.
+    _schedule_garden_rebuild()
+
+
+# ── Reactive Quartz garden rebuild (debounced) ────────────────────────────
+_QUARTZ_LOCK = threading.Lock()
+_QUARTZ_PENDING = False
+_QUARTZ_SCHEDULED_AT = 0.0
+_QUARTZ_DEBOUNCE_SECONDS = 30.0
+
+
+def _schedule_garden_rebuild() -> None:
+    """Schedule a debounced POST /rebuild to the Quartz trigger server."""
+    global _QUARTZ_PENDING, _QUARTZ_SCHEDULED_AT
+    trigger = os.environ.get("QUARTZ_TRIGGER_URL", "").strip()
+    if not trigger:
+        return
+    with _QUARTZ_LOCK:
+        _QUARTZ_PENDING = True
+        _QUARTZ_SCHEDULED_AT = time.monotonic()
+    threading.Thread(target=_quartz_rebuild_worker, args=(trigger,), daemon=True).start()
+
+
+def _quartz_rebuild_worker(trigger: str) -> None:
+    """Wait out the debounce window, then fire one rebuild if still pending."""
+    global _QUARTZ_PENDING, _QUARTZ_SCHEDULED_AT
+    # Debounce: wait up to the window; if another note landed meanwhile, keep
+    # waiting so burst captures coalesce into a single rebuild.
+    while True:
+        with _QUARTZ_LOCK:
+            elapsed = time.monotonic() - _QUARTZ_SCHEDULED_AT
+        if elapsed >= _QUARTZ_DEBOUNCE_SECONDS:
+            break
+        time.sleep(2.0)
+    with _QUARTZ_LOCK:
+        if not _QUARTZ_PENDING:
+            return
+        _QUARTZ_PENDING = False
+    try:
+        req = urllib.request.Request(
+            trigger, data=b"{}", method="POST", headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            body = json.loads(resp.read() or b"{}")
+        if body.get("ok"):
+            logger.info("quartz garden rebuilt (reactive, %.0fs)", body.get("durationMs", 0))
+        else:
+            logger.warning("quartz garden rebuild failed: %s", body.get("output", "")[-300:])
+    except Exception as exc:  # pragma: no cover - never let this break writes
+        logger.warning("quartz garden rebuild trigger failed: %s", exc)
 
 
 async def graph_subscriber(event: str, payload: dict) -> None:

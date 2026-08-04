@@ -39,7 +39,7 @@ export default function Calendar() {
           <h2>Birthdays</h2>
           <ul className="list">
             {birthdays.map((b) => (
-              <li key={b.person_id ?? b.id}>
+              <li key={String(b.person_id ?? b.id ?? b.name ?? "birthday")}>
                 <span>{b.name}</span>
                 <span className="muted">{b.days_until} days</span>
               </li>
@@ -50,7 +50,7 @@ export default function Calendar() {
           <h2>Events</h2>
           <ul className="list">
             {events.map((e) => (
-              <li key={e.event_id ?? e.id}>
+              <li key={String(e.event_id ?? e.id ?? `${e.date}-${e.title ?? e.name}`)}>
                 <span>{e.title ?? e.name}</span>
                 <span className="muted">{e.event_date ?? e.date ?? ""}</span>
               </li>
