@@ -114,14 +114,25 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
       info "  installing docker-compose plugin…"
       sudo apt-get install -y docker-compose-plugin >/dev/null 2>&1 || warn "  compose plugin install failed — check manually."
     }
-    # Caddy (web server / reverse proxy) — official repo
+    # Caddy (web server / reverse proxy) — official repo, with binary fallback.
     if ! need caddy; then
       info "  installing Caddy…"
       sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https >/dev/null 2>&1 || true
       curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null || true
       curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null 2>&1 || true
       sudo apt-get update -y >/dev/null 2>&1 || true
-      sudo apt-get install -y caddy >/dev/null 2>&1 || warn "  Caddy install failed — the web app will still build, but you'll need a static server."
+      if ! sudo apt-get install -y caddy >/dev/null 2>&1; then
+        warn "  cloudsmith install failed — downloading Caddy binary directly…"
+        cd /tmp && curl -fsSLO 'https://caddyserver.com/api/download?os=linux&arch=amd64' -o caddy.tar.gz 2>/dev/null \
+          && tar xzf caddy.tar.gz caddy && sudo mv caddy /usr/local/bin/ && cd "$REPO_ROOT" \
+          || warn "  Caddy binary download also failed — the web app will still build, but you'll need a server."
+      fi
+    fi
+    # Docker adds the user to the docker group, but it won't take effect until
+    # the next login. Warn if the user hasn't logged out/in yet.
+    if groups "$USER" 2>/dev/null | grep -qv docker 2>/dev/null; then
+      warn "  Docker installed, but your user isn't in the docker group yet."
+      warn "  Log out and back in (or run: newgrp docker) before re-running start.sh."
     fi
   else
     warn "  Unknown OS — please install git, python3, node/npm, docker and caddy manually."
@@ -240,6 +251,9 @@ TUID=$(env_get TELEGRAM_ALLOWED_USERS)
 
 # ── 6. Vault folder structure (fresh second brain) ───────────────────────
 info "Step 6 — second-brain vault."
+# Ubuntu server environments don't have ~/Documents by default — create it.
+VAULT_PARENT="$HOME/Documents"
+mkdir -p "$VAULT_PARENT" 2>/dev/null || true
 VAULT_PATH="${HERMES_VAULT_PATH:-$HOME/Documents/KnowledgeVault}"
 VAULT_PATH="$(eval echo "$VAULT_PATH")"
 VAULT_PATH_ABS="$(cd "$(dirname "$VAULT_PATH")" 2>/dev/null && pwd)/$(basename "$VAULT_PATH")"
@@ -403,13 +417,25 @@ if [[ "$START_WEB" == "1" ]]; then
     ok "  quartz garden up (http://localhost:8081)."
   fi
 
-  info "Step 11b — Caddy (:80 — internet-facing web app + /api proxy + /brain)."
+  info "Step 11b — Caddy (web app + /api proxy + /brain)."
   if need caddy; then
     mkdir -p "$REPO_ROOT/.run"
     CADDYFILE_TMP="$REPO_ROOT/.run/Caddyfile"
     VESPER_DOMAIN="${VESPER_DOMAIN:-}"
+    # Security: default to localhost-only unless VESPER_DOMAIN is set (the user
+    # opted into internet access, e.g. via a Tailscale MagicDNS hostname).
+    # Tailscale handles authentication transparently — only devices on your
+    # tailnet can reach the VM when VESPER_DOMAIN points at a .ts.net hostname.
+    if [[ -n "$VESPER_DOMAIN" ]]; then
+      SITE_ADDR="$VESPER_DOMAIN"
+    else
+      SITE_ADDR="localhost"
+      warn "  VESPER_DOMAIN not set — binding to localhost:80 only."
+      warn "  Your phone won't reach it. Set VESPER_DOMAIN=vm-name.ts.net in .env"
+      warn "  (requires Tailscale on both the VM and your phone), then re-run start.sh."
+    fi
     cat > "$CADDYFILE_TMP" <<CAD
-${VESPER_DOMAIN:-:80} {
+${SITE_ADDR} {
 	encode gzip
 
 	handle /api/* {
@@ -479,7 +505,7 @@ PY
 )"
 echo "  finance strategies → $N_STRATS"
 if curl -s -o /dev/null -m 3 "http://127.0.0.1:80/" 2>/dev/null; then
-  ok "  web app up on :80 (open from your phone: http://<server-ip>/)"
+  ok "  web app up on :80 (localhost only — see Tailscale setup below for phone access)"
 else
   warn "  web app not yet answering on :80 — check /tmp/vesper-caddy.log."
 fi
@@ -487,8 +513,22 @@ fi
 printf "\n"
 printf "${GREEN}Setup complete.${NC}\n"
 printf "  API health:   http://localhost:8000/health\n"
-printf "  Web app:      http://localhost:80/   (internet: http://<server-ip>/)\n"
+printf "  Web app:      http://localhost:80/   (localhost-only — secure default)\n"
 printf "  Brain garden: http://localhost:8081/\n"
 printf "  Telegram:     message your bot to talk to Hermes Agent.\n"
 printf "  Logs:         /tmp/vesper-api.log · /tmp/vesper-worker.log · /tmp/vesper-caddy.log · /tmp/vesper-gateway.log\n"
-printf "  Next step:    say 'remember <x>' to your bot and watch it land in the vault + graph.\n"
+printf "\n"
+printf "${YELLOW}Phone access (Tailscale):${NC}\n"
+printf "  1. Install Tailscale on the VM and your phone: https://tailscale.com/download\n"
+printf "  2. On the VM: tailscale up\n"
+printf "  3. Set VESPER_DOMAIN=<your-vm>.ts.net in .env, then re-run ./start.sh\n"
+printf "  4. Your phone opens http://<your-vm>.ts.net through the tailnet\n"
+printf "  All traffic stays inside your encrypted tailnet — no public facing ports.\n"
+printf "\n"
+printf "${YELLOW}Recommended hardening (Ubuntu):${NC}\n"
+printf "  sudo ufw enable; sudo ufw allow ssh; sudo ufw allow in on tailscale0\n"
+printf "  sudo ufw default deny incoming; sudo ufw default allow outgoing\n"
+printf "  This blocks all non-Tailscale inbound traffic at the OS level.\n"
+printf "  Also consider a swap file on low-RAM VPSes:\n"
+printf "  sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile\n"
+printf "  sudo mkswap /swapfile && sudo swapon /swapfile\n"

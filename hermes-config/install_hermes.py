@@ -42,6 +42,19 @@ CONFIG = HERMES_HOME / "config.yaml"
 HERMES_ENV = HERMES_HOME / ".env"
 PLUGIN_DST = HERMES_HOME / "plugins" / "vesper-capture-router"
 
+# Hermes binary — prefer the venv path (works immediately after install, before
+# ~/.local/bin is on PATH), fall back to the shell wrapper.
+_HERMES_CANDIDATES = [
+    HERMES_HOME / "hermes-agent" / "venv" / "bin" / "hermes",
+    Path.home() / ".local" / "bin" / "hermes",
+    Path("hermes"),  # let subprocess search PATH
+]
+HERMES_BIN: str = "hermes"
+for _c in _HERMES_CANDIDATES:
+    if _c.exists() or _c == Path("hermes"):
+        HERMES_BIN = str(_c)
+        break
+
 # Reasoning jobs that must run through Hermes Agent (plan.md §12): each maps
 # to a skill under hermes-config/cron/<name>/SKILL.md and an IST cron expr.
 CRON_JOBS = [
@@ -187,7 +200,7 @@ def register_cron() -> None:
     """Register reasoning cron jobs if not already present."""
     try:
         existing = subprocess.run(
-            ["hermes", "cron", "list"], capture_output=True, text=True, timeout=60,
+            [HERMES_BIN, "cron", "list"], capture_output=True, text=True, timeout=60,
         ).stdout
     except Exception:
         log_warn("`hermes cron list` failed — skipping cron registration (run start.sh again later)")
@@ -204,7 +217,7 @@ def register_cron() -> None:
             f"Write any outputs through the Vesper MCP servers."
         )
         cmd = [
-            "hermes", "cron", "create",
+            HERMES_BIN, "cron", "create",
             schedule,
             prompt,
             "--name", name,

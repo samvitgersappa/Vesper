@@ -208,6 +208,24 @@ macOS). It does literally everything:
 Idempotent: re-running skips what's already done. `--fresh` wipes the DB to a
 brand-new empty state and re-migrates.
 
+### Security — Tailscale (recommended)
+
+By default the web app binds to **localhost only** — no public internet access.
+To reach it from your phone, use Tailscale (free, encrypted tailnet):
+
+```
+# On the VM and your phone: https://tailscale.com/download
+tailscale up
+echo "VESPER_DOMAIN=<your-vm>.ts.net" >> .env
+./start.sh   # Caddy now serves on your tailnet-only domain
+UFW firewall (Ubuntu):
+sudo ufw enable && sudo ufw allow ssh
+sudo ufw allow in on tailscale0 && sudo ufw default deny incoming
+```
+
+Now your phone opens `http://<your-vm>.ts.net` through the encrypted tailnet.
+No ports are exposed to the public internet.
+
 ### Manual alternative
 
 ```bash
