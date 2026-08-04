@@ -234,12 +234,20 @@ async def update_universe() -> dict:
 
 
 async def paper_trade_eod() -> dict:
-    """17:00 IST weekdays — end-of-day paper trading for all 5 traders.
+    """18:00 IST weekdays — end-of-day paper trading for all 5 traders.
 
     Runs the full EOD engine (`backend.modules.finance.eod.run_eod`): generate
     targets per strategy from the factor store, execute orders against cash,
     update holdings/trades/NAV, and emit TradeExecuted / PortfolioNAVUpdated.
+
+    Skips market holidays (NSE closed) — records a 'holiday_skip' run so the
+    day is intentionally not traded.
     """
+    from backend.modules.finance.holidays import is_market_holiday
+    if is_market_holiday():
+        await _record_run("paper_trade_eod", "holiday_skip", "market closed (holiday)")
+        return {"ok": True, "job": "paper_trade_eod", "holiday": True}
+
     from backend.modules.finance.eod import run_eod
 
     res = await run_eod()

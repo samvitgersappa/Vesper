@@ -35,6 +35,21 @@ ALL_JOBS = {
     "catalyst_paper_trade": trader.run_day,
 }
 
+# Wrap every catalyst job with a market-holiday gate so trades and data
+# fetches never execute when the NSE/BSE is closed (public holidays).
+def _holiday_wrap(fn, job_name: str):
+    async def _gated():
+        from backend.modules.finance.holidays import is_market_holiday
+        if is_market_holiday():
+            from backend.modules.finance.catalyst._util import record_run
+            await record_run(job_name, "holiday_skip", "market closed (holiday)")
+            return {"ok": True, "job": job_name, "holiday": True}
+        return await fn()
+    _gated.__name__ = fn.__name__
+    return _gated
+
+ALL_JOBS = {k: _holiday_wrap(v, k) for k, v in ALL_JOBS.items()}
+
 
 async def catalyst_llm() -> dict:
     """18:40 IST — run the capped LLM catalyst stage over the top of the funnel."""

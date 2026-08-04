@@ -262,7 +262,8 @@ def run() -> None:
                     already = (await db.execute(
                         text(
                             "SELECT 1 FROM finance.job_runs "
-                            "WHERE job_name = 'paper_trade_eod' AND status = 'ok' "
+                            "WHERE job_name = 'paper_trade_eod' "
+                            "AND (status = 'ok' OR status = 'holiday_skip') "
                             "AND finished_at LIKE :today"
                         ), {"today": today + "%"},
                     )).scalar()
@@ -288,7 +289,8 @@ def run() -> None:
                     already = (await db.execute(
                         text(
                             "SELECT 1 FROM finance.job_runs "
-                            "WHERE job_name = 'catalyst_paper_trade' AND status = 'ok' "
+                            "WHERE job_name = 'catalyst_paper_trade' "
+                            "AND (status = 'ok' OR status = 'holiday_skip') "
                             "AND finished_at LIKE :today"
                         ), {"today": today + "%"},
                     )).scalar()
