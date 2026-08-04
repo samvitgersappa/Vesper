@@ -61,7 +61,7 @@ JOB_SCHEDULE = {
     "vault_backup_publish": {"trigger": "cron", "hour": 0, "minute": 15},
     "hermes_mirror": {"trigger": "interval", "minutes": 5},
     "notification_sweep_morning": {"trigger": "cron", "hour": 8, "minute": 0},
-    "notification_sweep_evening": {"trigger": "cron", "hour": 18, "minute": 0},
+    "notification_sweep_evening": {"trigger": "cron", "hour": 18, "minute": 5},
     # Catalyst Swing Trader (Part E) — 18:00–19:00 IST weekdays.
     "fetch_catalyst_bhavcopy": {"trigger": "cron", "hour": 18, "minute": 0, "day_of_week": "mon-fri"},
     "fetch_fii_dii": {"trigger": "cron", "hour": 18, "minute": 5, "day_of_week": "mon-fri"},

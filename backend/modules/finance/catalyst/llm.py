@@ -9,9 +9,9 @@ Budget: the daily call counter (`catalyst_llm_usage`) is capped at
 skipped (the candidate keeps its composite score with signal "none").
 
 Endpoint is OpenAI-compatible `/chat/completions`, driven by env:
-- CATALYST_LLM_BASE_URL  (default: DeepSeek API v1)
+- CATALYST_LLM_BASE_URL  (default: OpenCode Go v1)
 - CATALYST_LLM_API_KEY   (falls back to OPENCODE_GO_API_KEY)
-- CATALYST_LLM_MODEL     (default: deepseek-v4-flash)
+- CATALYST_LLM_MODEL     (default: gpt-5.6-luna)
 
 When no API key is configured the stage degrades honestly: every candidate is
 recorded with signal "none" and the run is marked degraded — it never
@@ -33,9 +33,9 @@ from backend.modules.finance.catalyst._util import ist_today, record_run
 
 logger = logging.getLogger("vesper.finance.catalyst.llm")
 
-LLM_BASE_URL = os.environ.get("CATALYST_LLM_BASE_URL", "https://api.deepseek.com/v1")
+LLM_BASE_URL = os.environ.get("CATALYST_LLM_BASE_URL", "https://opencode.ai/zen/go/v1")
 LLM_API_KEY = os.environ.get("CATALYST_LLM_API_KEY") or os.environ.get("OPENCODE_GO_API_KEY", "")
-LLM_MODEL = os.environ.get("CATALYST_LLM_MODEL", "deepseek-v4-flash")
+LLM_MODEL = os.environ.get("CATALYST_LLM_MODEL", "gpt-5.6-luna")
 
 _SYSTEM_PROMPT = (
     "You are the catalyst desk for a swing-trading strategy. Given a stock and "
