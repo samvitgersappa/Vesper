@@ -129,7 +129,7 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 | `vault_backup_publish` | 00:15 daily | Pushes the Obsidian vault to a private GitHub repo + triggers the Quartz garden rebuild |
 | `hermes_mirror` | every 5m | Mirrors Hermes tool-calls/usage into the `hermes` Postgres schema |
 | `notification_sweep_morning` | 08:00 daily | Morning Telegram digest |
-| `notification_sweep_evening` | 18:00 daily | Evening Telegram digest |
+| `notification_sweep_evening` | 18:05 daily | Evening Telegram digest (fires after paper_trade_eod to show fresh NAV) |
 | `fetch_catalyst_bhavcopy` | 18:00 Mon–Fri | NSE Common Bhavcopy delivery data → `delivery_stats` |
 | `fetch_fii_dii` | 18:05 Mon–Fri | NSE provisional FII/DII net flows → `market_sentiment_daily` |
 | `fetch_index_pcr` | 18:07 Mon–Fri | Nifty/BankNifty index option-chain PCR → `index_options_sentiment` |
