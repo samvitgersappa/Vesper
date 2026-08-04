@@ -105,6 +105,19 @@ function Pnl({ v, abs }: { v?: number | null; abs?: boolean }) {
   return <span className={cls}>{v > 0 ? "+" : ""}{text}</span>;
 }
 
+function PnlDay({ trader }: { trader: Trader }) {
+  const pct_ = trader.day_pnl_pct;
+  const eq = trader.total_equity ?? 0;
+  if (pct_ == null || Number.isNaN(pct_) || eq === 0) return <span className="muted">Day —</span>;
+  // approximate absolute PnL from equity * percentage
+  const abs_ = Math.round(eq * pct_ / (100 + pct_)); // reverse: eq_now = eq_prev * (1 + pct/100), so delta = eq_now - eq_now/(1+pct/100)
+  const cls = pct_ > 0 ? "good" : pct_ < 0 ? "bad" : "muted";
+  return <span className={cls}>{pct_ > 0 ? "+" : ""}₹{Math.abs(Math.round(abs_)).toLocaleString("en-IN")} · {pct_ > 0 ? "+" : ""}{pct_.toFixed(2)}%</span>;
+}
+
+const PERIODS = { "1W":5, "1M":22, "3M":66, "6M":130, "1Y":260, "3Y":780, "5Y":1300 } as const;
+type Period = keyof typeof PERIODS;
+
 function SideBadge({ side }: { side: string }) {
   const s = String(side).toUpperCase();
   return <span className={`badge ${s === "BUY" ? "buy" : "sell"}`}>{s}</span>;
@@ -125,11 +138,12 @@ export default function Finance() {
   const [running, setRunning] = useState(false);
   const [lastRun, setLastRun] = useState<AnyDict | null>(null);
   const [navData, setNavData] = useState<AnyDict | null>(null);
+  const [range, setRange] = useState<Period>("1M");
 
   useEffect(() => {
     (async () => {
       try {
-        const n = await api<AnyDict>("/finance/nav");
+        const n = await api<AnyDict>("/finance/nav", { limit: PERIODS[range] });
         setNavData(n);
       } catch {}
     })();
@@ -318,6 +332,11 @@ export default function Finance() {
 
       {tab === "portfolio" && data && (
         <>
+          <div style={{display:"flex",gap:6,marginBottom:14}}>
+            {(Object.keys(PERIODS) as Period[]).map(p => 
+              <button key={p} className={"pill" + (range === p ? " active" : "")} onClick={() => setRange(p)}>{p}</button>
+            )}
+          </div>
           <div className="stat-cards">
             <div className="stat-card">
               <span className="stat-label">Total Portfolio Value</span>
@@ -437,7 +456,7 @@ function HoldingsGroup({ trader, name, color, nav }: { trader: Trader; name: str
           </div>
         </div>
         <div className="gh-sub" style={{ textAlign: "right" }}>
-          Day <Pnl v={trader.day_pnl_pct} />
+          <PnlDay trader={trader} />
         </div>
       </div>
       {nav && nav.length > 1 && (
