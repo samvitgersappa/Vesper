@@ -233,5 +233,84 @@ def run() -> None:
 
     threading.Thread(target=_bootstrap_catalyst, daemon=True).start()
 
+    def _catch_up_traders():
+        """Dispatch any trader jobs that missed today's window (startup after
+        18:00 IST, worker crash/restart, server waking from sleep). Checks
+        finance.job_runs for today's non-degraded paper_trade_eod run; if
+        missing, dispatches it immediately so the trading day is never lost.
+
+        Also catches up the catalyst paper trader if today's screen/LLM data
+        pipeline has already run (the catalyst trader degrades honestly when
+        the feature store is empty, so running it pre-emptively is harmless).
+        """
+        import time as _time
+        from datetime import datetime, timezone, timedelta
+
+        _time.sleep(6)  # let the scheduler + event subscribers settle
+
+        ist = timezone(timedelta(hours=5, minutes=30))
+        today = datetime.now(ist).strftime("%Y-%m-%d")
+        weekday = datetime.now(ist).weekday()  # 0=Mon .. 6=Sun
+        if weekday >= 5:
+            logger.info("catch-up: weekend (%s) — paper_trade_eod only runs Mon–Fri, skip", today)
+            return
+        try:
+            from backend.modules.db import session_factory
+            from sqlalchemy import text
+            async def _catch_up():
+                async with session_factory()() as db:
+                    already = (await db.execute(
+                        text(
+                            "SELECT 1 FROM finance.job_runs "
+                            "WHERE job_name = 'paper_trade_eod' AND status = 'ok' "
+                            "AND finished_at LIKE :today"
+                        ), {"today": today + "%"},
+                    )).scalar()
+                if already:
+                    logger.info("catch-up: paper_trade_eod already ran today — skip")
+                    return
+                logger.info("catch-up: paper_trade_eod missed today — running now")
+                from backend.automation.jobs.finance import paper_trade_eod
+                res = await paper_trade_eod()
+                n = len(res.get("traders", []))
+                logger.info("catch-up: paper_trade_eod done (%d traders, degraded=%s)", n, res.get("degraded"))
+            asyncio.run(_catch_up())
+        except Exception as exc:  # pragma: no cover
+            logger.warning("catch-up paper_trade_eod failed: %s", exc)
+
+        # Catalyst paper trader: run if today's catalyst_llm/catalyst_risk have
+        # already produced data (the cron schedule feeds them before the trade).
+        try:
+            from backend.modules.db import session_factory
+            from sqlalchemy import text
+            async def _catch_up_catalyst():
+                async with session_factory()() as db:
+                    already = (await db.execute(
+                        text(
+                            "SELECT 1 FROM finance.job_runs "
+                            "WHERE job_name = 'catalyst_paper_trade' AND status = 'ok' "
+                            "AND finished_at LIKE :today"
+                        ), {"today": today + "%"},
+                    )).scalar()
+                if already:
+                    logger.info("catch-up: catalyst_paper_trade already ran today — skip")
+                    return
+                prev = (await db.execute(
+                    text("SELECT 1 FROM finance.job_runs WHERE job_name = 'catalyst_screen' AND finished_at LIKE :today"),
+                    {"today": today + "%"},
+                )).scalar()
+                if not prev:
+                    logger.info("catch-up: catalyst screen not yet run today — deferring catalyst_paper_trade to cron")
+                    return
+                logger.info("catch-up: catalyst_paper_trade missed today — running now")
+                from backend.modules.finance.catalyst.trader import run_day as catalyst_run_day
+                res = await catalyst_run_day()
+                logger.info("catch-up: catalyst_paper_trade done (degraded=%s)", res.get("degraded"))
+            asyncio.run(_catch_up_catalyst())
+        except Exception as exc:  # pragma: no cover
+            logger.warning("catch-up catalyst_paper_trade failed: %s", exc)
+
+    threading.Thread(target=_catch_up_traders, daemon=True).start()
+
     logger.info("Starting Vesper data scheduler")
     scheduler.start()
