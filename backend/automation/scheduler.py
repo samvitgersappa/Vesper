@@ -281,6 +281,9 @@ def run() -> None:
 
         # Catalyst paper trader: run if today's catalyst_llm/catalyst_risk have
         # already produced data (the cron schedule feeds them before the trade).
+        # If the screen never ran but factor_features exist in DuckDB, run the
+        # screen first, then the trade — the catalyst becomes self-sufficient
+        # when price data exists, not dependent on the full NSE live pipeline.
         try:
             from backend.modules.db import session_factory
             from sqlalchemy import text
@@ -302,8 +305,22 @@ def run() -> None:
                     {"today": today + "%"},
                 )).scalar()
                 if not prev:
-                    logger.info("catch-up: catalyst screen not yet run today — deferring catalyst_paper_trade to cron")
-                    return
+                    # Screen never ran. If factor features exist, run the screen
+                    # now so the trader has candidates to evaluate.
+                    try:
+                        from backend.db import feature_store as fs
+                        f = fs.client.df("SELECT 1 FROM factor_features LIMIT 1")
+                        has_factors = not f.empty
+                    except Exception:
+                        has_factors = False
+                    if has_factors:
+                        logger.info("catch-up: catalyst_screen missed — running it now (factors exist)")
+                        from backend.modules.finance.catalyst.scores import screen as catalyst_screen
+                        scr = await catalyst_screen()
+                        logger.info("catch-up: catalyst_screen done (degraded=%s, scored=%s)", scr.get("degraded"), scr.get("scored"))
+                    else:
+                        logger.info("catch-up: catalyst_screen not run and no factors — deferring to cron")
+                        return
                 logger.info("catch-up: catalyst_paper_trade missed today — running now")
                 from backend.modules.finance.catalyst.trader import run_day as catalyst_run_day
                 res = await catalyst_run_day()
