@@ -124,6 +124,16 @@ export default function Finance() {
   const [error, setError] = useState("");
   const [running, setRunning] = useState(false);
   const [lastRun, setLastRun] = useState<AnyDict | null>(null);
+  const [navData, setNavData] = useState<AnyDict | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const n = await api<AnyDict>("/finance/nav");
+        setNavData(n);
+      } catch {}
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -371,7 +381,12 @@ export default function Finance() {
           {traders.length === 0 ? (
             <div className="muted">No portfolio data.</div>
           ) : (
-            traders.map((t) => <HoldingsGroup key={t.trader_id} trader={t} name={meta[t.trader_id]?.name ?? t.trader_id} color={colorFor(t.trader_id)} />)
+            <>
+              {navData && Object.keys(navData).length > 1 && (
+                <PortfolioNavChart nav={navData} meta={meta} />
+              )}
+              {traders.map((t) => <HoldingsGroup key={t.trader_id} trader={t} name={meta[t.trader_id]?.name ?? t.trader_id} color={colorFor(t.trader_id)} nav={(navData?.nav ?? navData)?.[t.trader_id]} />)}
+            </>
           )}
 
           {selected === "catalyst_swing" && <CatalystInsights />}
@@ -394,7 +409,7 @@ export default function Finance() {
 }
 
 // ── Portfolio: one grouped card per strategy ──────────────────────────
-function HoldingsGroup({ trader, name, color }: { trader: Trader; name: string; color: string }) {
+function HoldingsGroup({ trader, name, color, nav }: { trader: Trader; name: string; color: string; nav?: NavRow[] }) {
   const hs = trader.holdings ?? [];
   const invested = trader.holdings_value ?? hs.reduce((s, h) => s + (h.market_value ?? 0), 0);
   const totalEquity = trader.total_equity ?? invested + (trader.cash?.available ?? 0);
@@ -425,6 +440,11 @@ function HoldingsGroup({ trader, name, color }: { trader: Trader; name: string; 
           Day <Pnl v={trader.day_pnl_pct} />
         </div>
       </div>
+      {nav && nav.length > 1 && (
+        <div style={{ height: 48, margin: "0 0 8px 0" }}>
+          <SparkLine data={nav} color={color} />
+        </div>
+      )}
       <div className="card-body">
         {rows.length === 0 ? (
           <div className="muted" style={{ padding: 16 }}>No open positions.</div>
@@ -1037,4 +1057,58 @@ function CatalystInsights() {
       </div>
     </>
   );
+}
+
+// ── Sparkline (per-trader NAV mini-chart) ─────────────────────────────
+function SparkLine({ data, color }: { data: NavRow[]; color: string }) {
+  const pts = data.map(d => d.total_equity).filter(v => v != null && !isNaN(v)) as number[];
+  if (pts.length < 2) return null;
+  const min = Math.min(...pts), max = Math.max(...pts), range = max - min || 1;
+  const w = pts.length * 3 + 2, h = 48;
+  const x = (i: number) => 1 + (i / Math.max(1, pts.length - 1)) * (w - 2);
+  const y = (v: number) => h - 4 - ((v - min) / range) * (h - 8);
+  const poly = pts.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+  return <svg viewBox={`0 0 ${w} ${h}`} width="100%" height="100%" style={{overflow:"visible"}} preserveAspectRatio="none">
+    <polyline points={poly} fill="none" stroke={color} strokeWidth={1} strokeLinejoin="round" strokeLinecap="round" />
+  </svg>;
+}
+
+// ── Portfolio NAV chart (total equity over time, all traders + Nifty) ──
+function PortfolioNavChart({ nav, meta }: { nav: AnyDict; meta: Record<string,any> }) {
+  const navObj = nav.nav || nav;
+  const traders = Object.keys(navObj).filter(k => k !== 'nifty');
+  if (traders.length < 2) return null;
+  const firstRows = navObj[traders[0]] as any[] | undefined;
+  if (!firstRows) return null;
+  const dates = firstRows.map((r: any) => String(r.date));
+  if (dates.length < 2) return null;
+  const niftyRaw = (nav.nifty || []) as {date:string;close:number;cumulative_pct:number}[];
+  const niftyMap = new Map(niftyRaw.map(r => [String(r.date), r.cumulative_pct] as [string, number]));
+  const series: CurveSeries[] = [];
+  for (let i = 0; i < traders.length; i++) {
+    const t = traders[i];
+    const rows = navObj[t] as NavRow[] | undefined;
+    if (!rows || rows.length < 2) continue;
+    const eq = rows.map(r => Number(r.total_equity));
+    let base: number = 1;
+    for (const v of eq) { if (!isNaN(v) && v > 0) { base = v; break; } }
+    series.push({
+      label: meta[t]?.short || t,
+      color: NAV_COLORS[i % NAV_COLORS.length],
+      pts: eq.map(v => !isNaN(v) ? (v / base - 1) * 100 : null),
+    });
+  }
+  if (niftyMap.size > 0) {
+    series.push({
+      label: "NIFTY 50", color: "#b8bec9", dashed: true,
+      pts: dates.map(d => { const v = niftyMap.get(d); return v !== undefined ? v : null; }),
+    });
+  }
+  return <div className="card" style={{marginBottom:16}}>
+    <h2>Portfolio Value Over Time</h2>
+    <div className="legend" style={{marginBottom:8}}>
+      {series.map(s => <span key={s.label}><i style={{background:s.color,border:s.dashed?'1px dashed '+s.color:'none'}}/>{s.label}</span>)}
+    </div>
+    <CurveChart axes={dates} series={series} height={200} />
+  </div>;
 }
