@@ -44,14 +44,18 @@ async def note_content(path: str) -> dict:
 
 
 @mcp.tool()
-async def capture(utterance: str, conversation_context: dict = None) -> dict:
+async def capture(utterance: str, conversation_context: dict = None, note_body: str = None) -> dict:
     """Universal capture-routing decision point (plan.md §4.1, rules 1-8).
 
     Routes an arbitrary "remember this" utterance to reminder/expense/workout/
     journal/vault_note/image_note and always mirrors the decision to
     hermes.capture_routing_log.
+
+    `note_body` (optional): for vault_note captures, pass a structured,
+    well-written note body the agent drafted. When omitted the raw utterance is
+    stored, so a deterministic call always works.
     """
-    return await capture_impl(utterance, conversation_context or {})
+    return await capture_impl(utterance, conversation_context or {}, note_body=note_body)
 
 
 @mcp.tool()

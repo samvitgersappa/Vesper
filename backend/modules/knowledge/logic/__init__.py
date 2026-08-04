@@ -610,8 +610,13 @@ async def _append_journal(utterance: str, flagged: bool = False) -> Optional[str
     return rel
 
 
-async def _create_vault_note(utterance: str) -> Optional[str]:
-    """Rule 5 — new note under 03 Knowledge/ with frontmatter + body."""
+async def _create_vault_note(utterance: str, note_body: Optional[str] = None) -> Optional[str]:
+    """Rule 5 — new note under 03 Knowledge/ with frontmatter + body.
+
+    Uses `note_body` when provided (a structured draft the agent wrote);
+    otherwise falls back to the raw utterance so the deterministic path still
+    produces a usable note.
+    """
     root = vault_root()
     if not root.exists():
         return None
@@ -620,24 +625,43 @@ async def _create_vault_note(utterance: str) -> Optional[str]:
     path = root / "03 Knowledge" / f"{slug}.md"
     if path.exists():
         path = root / "03 Knowledge" / f"{slug}-{date.today().isoformat()}.md"
-    body = utterance.strip()
+    body = (note_body or utterance).strip()
+    # A structured agent draft already carries its own sections/headings — don't
+    # double-wrap it under "## The Idea". Raw utterances get the plain wrapper.
+    structured = bool(note_body and note_body.strip())
 
     def _write() -> str:
         path.parent.mkdir(parents=True, exist_ok=True)
-        content = (
-            "---\n"
-            f"title: {_yaml_value(title)}\n"
-            f"slug: {slug}\n"
-            "type: note\n"
-            "status: draft\n"
-            "tags: []\n"
-            "confidence: 1.0\n"
-            "---\n\n"
-            f"## The Idea\n\n{body}\n\n"
-            "## Related\n\n\n"
-            "## Notes\n\n"
-            f"- Captured via knowledge.capture on {date.today().isoformat()}.\n"
-        )
+        if structured:
+            content = (
+                "---\n"
+                f"title: {_yaml_value(title)}\n"
+                f"slug: {slug}\n"
+                "type: note\n"
+                "status: draft\n"
+                "tags: []\n"
+                "confidence: 1.0\n"
+                "---\n\n"
+                f"{body}\n\n"
+                "## Related\n\n\n"
+                "## Notes\n\n"
+                f"- Captured via knowledge.capture on {date.today().isoformat()}.\n"
+            )
+        else:
+            content = (
+                "---\n"
+                f"title: {_yaml_value(title)}\n"
+                f"slug: {slug}\n"
+                "type: note\n"
+                "status: draft\n"
+                "tags: []\n"
+                "confidence: 1.0\n"
+                "---\n\n"
+                f"## The Idea\n\n{body}\n\n"
+                "## Related\n\n\n"
+                "## Notes\n\n"
+                f"- Captured via knowledge.capture on {date.today().isoformat()}.\n"
+            )
         path.write_text(content, encoding="utf-8")
         return str(path.relative_to(root))
 
@@ -729,12 +753,18 @@ async def knowledge_note_content(path: str) -> dict[str, Any]:
 
 
 async def knowledge_capture(
-    utterance: str, conversation_context: Optional[dict] = None
+    utterance: str,
+    conversation_context: Optional[dict] = None,
+    note_body: Optional[str] = None,
 ) -> dict[str, Any]:
     """Universal capture-routing decision point (plan.md §4.1, rules 1-8).
 
     Deterministic heuristics, no LLM. Always mirrors the decision to
     hermes.capture_routing_log (rule 8).
+
+    `note_body` (optional) lets the agent pass a structured, written note body
+    for vault_note captures — when omitted, the raw utterance is used so the
+    deterministic path still works.
     """
     ctx = conversation_context or {}
     rule: Optional[str] = None
@@ -771,7 +801,7 @@ async def knowledge_capture(
         elif idea_signal and not journal_signal:
             rule, stored_in = "rule5", "vault_note"
             confidence = 0.8
-            ref_id = await _create_vault_note(utterance)
+            ref_id = await _create_vault_note(utterance, note_body=note_body)
             message = "Created a vault note under 03 Knowledge/."
         elif image_path:
             rule, stored_in = "rule6", "image_note"

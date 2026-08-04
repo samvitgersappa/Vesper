@@ -22,6 +22,7 @@ type Ipo = {
 const STATUS_COLORS: Record<string, string> = {
   open: "#3ddc97",
   upcoming: "#5b8cff",
+  draft: "#8a93a6",
   recent: "#f6c445",
   listed: "#4fd8e0",
 };
@@ -58,11 +59,14 @@ export default function Ipo() {
         accentB="#5b8cff"
       />
       {error && <div className="error">{error}</div>}
+      {source === "live" && (
+        <div className="note">
+          Live calendar from Moneycontrol — refreshed every ~10 minutes. {rows.length} issues shown.
+        </div>
+      )}
       {source === "sample" && (
         <div className="note">
-          Sample calendar — no live IPO feed is configured yet. These rows are
-          illustrative placeholders so the page stays useful until a real
-          source is wired in.
+          Live IPO feed unreachable — showing a curated fallback calendar.
         </div>
       )}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -93,23 +97,23 @@ export default function Ipo() {
                 <div className="stat-grid" style={{ marginTop: 10 }}>
                   <div>
                     <div className="stat-label">Open</div>
-                    {ipo.open_date}
+                    {ipo.open_date || "—"}
                   </div>
                   <div>
                     <div className="stat-label">Close</div>
-                    {ipo.close_date}
+                    {ipo.close_date || "—"}
                   </div>
                   <div>
                     <div className="stat-label">Listing</div>
-                    {ipo.listing_date}
+                    {ipo.listing_date || "—"}
                   </div>
                   <div>
                     <div className="stat-label">Price band</div>
-                    {ipo.price_band}
+                    {ipo.price_band && ipo.price_band !== "₹None – ₹None" ? ipo.price_band : "TBD"}
                   </div>
                   <div>
                     <div className="stat-label">Lot size</div>
-                    {ipo.lot_size}
+                    {ipo.lot_size || "—"}
                   </div>
                 </div>
                 <div style={{ marginTop: 10 }}>

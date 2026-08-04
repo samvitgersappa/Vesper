@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -101,6 +102,54 @@ def _iter_tool_names(messages: Optional[List[Any]]) -> Set[str]:
             if isinstance(msg, dict):
                 _scan(msg.get(key))
     return names
+
+
+def _capture_already_happened(utterance: str) -> bool:
+    """Return True if a note/journal entry for this utterance was already
+    written this turn (the agent routed it through knowledge.capture). Checks
+    the vault for a recently-modified note (last ~3 min) whose slug or content
+    overlaps the utterance — the agent may file it under any area folder."""
+    try:
+        vault = os.environ.get(
+            "OBSIDIAN_VAULT_PATH",
+            str(Path.home() / "Documents" / "KnowledgeVault"),
+        )
+        root = Path(vault).expanduser()
+        if not root.is_dir():
+            return False
+        now = time.time()
+        # Distinctive tokens from the utterance for content matching.
+        tokens = {t.lower() for t in re.findall(r"[A-Za-z]{4,}", utterance) if t.lower() not in {
+            "test", "save", "this", "that", "with", "from", "into", "they", "them",
+            "when", "what", "have", "been", "will", "your", "youre", "about",
+        }}
+        slug = re.sub(r"[^a-z0-9]+", "-", utterance.lower()).strip("-")[:70]
+        for base in ("03 Knowledge", "04 Learning", "05 People", "06 Finance",
+                     "07 Health", "08 Career", "01 Inbox", "02 Projects"):
+            base_dir = root / base
+            if not base_dir.is_dir():
+                continue
+            for p in base_dir.rglob("*.md"):
+                try:
+                    age = now - p.stat().st_mtime
+                except OSError:
+                    continue
+                if age >= 180:
+                    continue
+                # Slug match (any folder) OR content overlap on distinctive tokens.
+                if slug[:40] in p.stem:
+                    return True
+                if tokens:
+                    try:
+                        head = p.read_text(encoding="utf-8", errors="replace")[:800].lower()
+                        hits = sum(1 for t in tokens if t in head)
+                        if hits >= 2:
+                            return True
+                    except OSError:
+                        pass
+    except Exception:
+        return False
+    return False
 
 
 def _iter_vault_writes(messages: Optional[List[Any]]) -> Set[str]:
@@ -298,6 +347,14 @@ def _on_post_llm_call(
             "capture-router: agent already routed via %s; skipping",
             sorted(used & _CAPTURE_SINKS),
         )
+        return None
+
+    # Robust guard: if the agent's own capture already wrote a vault note /
+    # journal entry for this utterance this turn (possibly under any area
+    # folder), don't re-capture a shallow duplicate. Catches tool-call formats
+    # the name scan above misses.
+    if _capture_already_happened(user_text.strip()):
+        logger.debug("capture-router: note for this utterance already exists; skipping")
         return None
 
     # Dispatch knowledge.capture deterministically.

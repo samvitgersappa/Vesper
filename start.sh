@@ -243,11 +243,19 @@ info "Step 6 — second-brain vault."
 VAULT_PATH="${HERMES_VAULT_PATH:-$HOME/Documents/KnowledgeVault}"
 VAULT_PATH="$(eval echo "$VAULT_PATH")"
 VAULT_PATH_ABS="$(cd "$(dirname "$VAULT_PATH")" 2>/dev/null && pwd)/$(basename "$VAULT_PATH")"
+# PARA-style second brain. `00 Journal`, `03 Knowledge` and `99 Assets` are
+# hard-coded paths in the backend modules — never rename those three.
 mkdir -p "$VAULT_PATH_ABS/00 Journal/$(date +%Y)"
-mkdir -p "$VAULT_PATH_ABS/03 Knowledge"
-mkdir -p "$VAULT_PATH_ABS/99 Assets/images"
 mkdir -p "$VAULT_PATH_ABS/01 Inbox"
 mkdir -p "$VAULT_PATH_ABS/02 Projects"
+mkdir -p "$VAULT_PATH_ABS/03 Knowledge"
+mkdir -p "$VAULT_PATH_ABS/04 Learning"
+mkdir -p "$VAULT_PATH_ABS/05 People"
+mkdir -p "$VAULT_PATH_ABS/06 Finance"
+mkdir -p "$VAULT_PATH_ABS/07 Health"
+mkdir -p "$VAULT_PATH_ABS/08 Career"
+mkdir -p "$VAULT_PATH_ABS/09 Archive"
+mkdir -p "$VAULT_PATH_ABS/99 Assets/images"
 if [[ ! -f "$VAULT_PATH_ABS/index.md" ]]; then
   cat > "$VAULT_PATH_ABS/index.md" <<'MD'
 ---
@@ -258,9 +266,20 @@ tags: []
 
 # Vesper Second Brain
 
-Welcome to your second brain. Notes live here, the journal is at
-`00 Journal/YYYY/YYYY-MM-DD.md`, captured ideas at `03 Knowledge/`, and images
-at `99 Assets/images/`.
+Welcome to your second brain. Everything you capture lands here and is
+organised into areas:
+
+- `00 Journal/` — daily journal entries (`YYYY-MM-DD.md`)
+- `01 Inbox/` — quick captures awaiting organisation
+- `02 Projects/` — active projects with their own notes
+- `03 Knowledge/` — evergreen notes & captured ideas (auto-filed by capture routing)
+- `04 Learning/` — study, books, courses, skills
+- `05 People/` — people & relationships notes
+- `06 Finance/` — money, budgets, trading notes
+- `07 Health/` — fitness, mood, wellbeing
+- `08 Career/` — work, interviews, goals
+- `09 Archive/` — inactive or reference material
+- `99 Assets/` — images and attachments
 MD
 fi
 if [[ ! -d "$VAULT_PATH_ABS/.git" ]]; then
@@ -321,6 +340,10 @@ ok "  migrations applied (alembic head)."
 "$PY" -c "from backend.db.feature_store import ensure_schema; ensure_schema(); print('  feature store ready')"
 "$PY" -m backend.modules.finance.bootstrap
 ok "  6 paper-trader accounts ensured (alpha_tilt, arjun_etf, lowdd_multi_asset, momentum_surge, alpha_generators, catalyst_swing)."
+# Starter people/interactions/reminders so the dashboard + People page + graph
+# are demonstrably working on a brand-new install (idempotent).
+"$PY" -m backend.modules.relationship.seed
+ok "  starter people + interactions seeded (dashboard / people / graph populated)."
 
 # ── 9. Provision Hermes Agent ────────────────────────────────────────────
 if [[ "$INSTALL_HERMES" == "1" ]] && [[ -x "$PY" ]]; then

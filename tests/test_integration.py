@@ -501,7 +501,9 @@ async def test_ipo_calendar():
     rec_res = await list_recent()
     assert all_res["ok"] is True
     assert all_res["count"] > 0
-    assert all_res["source"] == "sample"
+    # Live feed when the network is up, curated fallback otherwise — both are
+    # valid; the contract is the row shape, not the source.
+    assert all_res["source"] in {"live", "sample"}
     for row in all_res["ipos"]:
         assert "name" in row and "status" in row and "price_band" in row
     assert up_res["count"] > 0

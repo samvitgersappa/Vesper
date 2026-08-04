@@ -1,33 +1,145 @@
 """ipo module — upcoming & recent Indian IPO calendar (plan §13, web + MCP).
 
-The NSE IPO API is unreachable from typical dev environments (and yfinance
-has no IPO calendar), so this module is backed by a curated dataset of
-upcoming/recent NSE/BSE IPOs (`IPO_UNIVERSE` below). Every row carries enough
-structure for the web page (dates, price band, lot size, status) and is
-deterministic — no network dependency, no LLM.
+Backed by **real data** from Moneycontrol's IPO page (`__NEXT_DATA__` JSON),
+fetched live with a short TTL cache. When the network/provider is unreachable
+it degrades honestly to a small curated fallback list (never fabricates), and
+reports `source: "live"` vs `source: "sample"` so the UI can say which.
 
-Exposes read tools:
-- `list_upcoming()`   — IPOs still open/upcoming (status in pending/upcoming)
-- `list_recent()`     — recently closed/listed IPOs
-- `list_all()`        — the whole curated calendar
-
-An optional DB-backed path (`finance`-style table) can be added later if a
-live provider becomes available; the module stays read-only today.
+Every row maps to the web page's shape:
+  id, name, symbol, exchange, open_date, close_date, listing_date,
+  price_band, lot_size, status, note
 """
 
 from __future__ import annotations
 
-from datetime import date, timedelta
-from typing import Any
+import json
+import logging
+import re
+import time
+from datetime import date, datetime, timedelta
+from typing import Any, Optional
 
-# Curated NSE/BSE IPO calendar. Dates are illustrative placeholders on a
-# rolling window anchored to today so the page always has upcoming + recent
-# rows. Replace/refresh this list to track real listings.
+import httpx
+
+logger = logging.getLogger("vesper.ipo")
+
+# Moneycontrol IPO page — the `__NEXT_DATA__` JSON holds the live calendar.
+MONEYCONTROL_IPO_URL = "https://www.moneycontrol.com/ipo/"
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+_TTL_SECONDS = 10 * 60  # refresh the live calendar at most every 10 min
+_cache: dict[str, Any] = {"ts": 0.0, "data": None, "ok": False}
+
+
 def _iso(d: date) -> str:
     return d.isoformat()
 
 
-def _universe() -> list[dict[str, Any]]:
+# ── Live fetch from Moneycontrol ─────────────────────────────────────────
+def _moneycontrol_rows() -> Optional[list[dict[str, Any]]]:
+    """Fetch + parse the live IPO calendar. Returns None on any failure."""
+    try:
+        resp = httpx.get(
+            MONEYCONTROL_IPO_URL, headers=_HEADERS, timeout=15, follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            logger.warning("moneycontrol IPO page returned %s", resp.status_code)
+            return None
+        m = re.search(
+            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+            resp.text, re.S,
+        )
+        if not m:
+            logger.warning("moneycontrol IPO page has no __NEXT_DATA__")
+            return None
+        data = json.loads(m.group(1))
+        ipo = data["props"]["pageProps"]["ipoData"]
+    except Exception as exc:  # noqa: BLE001 - any fetch failure degrades
+        logger.warning("moneycontrol IPO fetch failed: %s", exc)
+        return None
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _band(lo, hi) -> str:
+        try:
+            lo, hi = float(lo), float(hi)
+        except (TypeError, ValueError):
+            return ""
+        if lo <= 0 and hi <= 0:
+            return ""
+        return f"₹{int(lo):,} – ₹{int(hi):,}"
+
+    def _symbol(name: str, code) -> str:
+        return str(code or "").upper() or ""
+
+    def _add(item: dict, status: str) -> None:
+        name = str(item.get("company_name") or item.get("equityName") or "").strip()
+        if not name:
+            return
+        key = name.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        code = item.get("sc_id") or item.get("company_code") or item.get("short_name")
+        rows.append({
+            "id": str(code or re.sub(r"[^a-z0-9]+", "-", name.lower())),
+            "name": name,
+            "symbol": _symbol(name, code),
+            "exchange": "NSE/BSE" if str(item.get("ipo_type", "")).lower() != "sme" else "SME",
+            "open_date": str(item.get("open_date") or item.get("dt_open") or ""),
+            "close_date": str(item.get("close_date") or ""),
+            "listing_date": str(item.get("listing_date") or ""),
+            "price_band": _band(item.get("from_issue_price"), item.get("to_issue_price")),
+            "lot_size": item.get("lot_size") or 0,
+            "status": status,
+            "note": str(item.get("short_desc") or item.get("note") or "").strip()
+            or f"{name} {status.lower()}.",
+        })
+
+    # Open / upcoming issues.
+    for it in ipo.get("open_Upcoming", []) or []:
+        st = str(it.get("ipo_status", "")).strip().lower()
+        _add(it, "open" if st == "open" else "upcoming")
+    for it in ipo.get("openIpoList", []) or []:
+        _add(it, "open")
+    # Closed (waiting to list) → recent.
+    for it in ipo.get("closedIpo", []) or []:
+        _add(it, "recent")
+    # Recently listed.
+    for it in ipo.get("listedIpo", []) or []:
+        _add(it, "listed")
+    # Draft papers — no price band/dates yet; keep them as "draft" (the UI shows
+    # them under Upcoming with a clean note rather than empty fields).
+    for it in ipo.get("draftIssue", []) or []:
+        _add(it, "draft")
+
+    return rows
+
+
+def _live_or_fallback() -> tuple[list[dict[str, Any]], str]:
+    """Return (rows, source). Caches the live payload for TTL seconds."""
+    now = time.monotonic()
+    if now - _cache["ts"] > _TTL_SECONDS:
+        rows = _moneycontrol_rows()
+        if rows:
+            _cache.update(ts=now, data=rows, ok=True)
+        else:
+            _cache.update(ts=now, data=None, ok=False)
+    if _cache["ok"] and _cache["data"]:
+        return _cache["data"], "live"
+    return _curated_fallback(), "sample"
+
+
+# ── Curated fallback (offline / provider down) ───────────────────────────
+def _curated_fallback() -> list[dict[str, Any]]:
     today = date.today()
     return [
         {
@@ -41,7 +153,7 @@ def _universe() -> list[dict[str, Any]]:
             "price_band": "₹950 – ₹1,000",
             "lot_size": 15,
             "status": "upcoming",
-            "note": "Follow-on public offer (curated placeholder).",
+            "note": "Follow-on public offer (fallback placeholder).",
         },
         {
             "id": "swiggy-2026",
@@ -54,7 +166,7 @@ def _universe() -> list[dict[str, Any]]:
             "price_band": "₹370 – ₹390",
             "lot_size": 38,
             "status": "upcoming",
-            "note": "Food-delivery IPO (curated placeholder).",
+            "note": "Food-delivery IPO (fallback placeholder).",
         },
         {
             "id": "vishal-2026",
@@ -67,20 +179,7 @@ def _universe() -> list[dict[str, Any]]:
             "price_band": "₹72 – ₹78",
             "lot_size": 190,
             "status": "upcoming",
-            "note": "Value retail IPO (curated placeholder).",
-        },
-        {
-            "id": "watch-2026",
-            "name": "Watch & Accessories Manufacturing Co",
-            "symbol": "WATCH",
-            "exchange": "NSE/BSE",
-            "open_date": _iso(today - timedelta(days=1)),
-            "close_date": _iso(today + timedelta(days=1)),
-            "listing_date": _iso(today + timedelta(days=6)),
-            "price_band": "₹350 – ₹370",
-            "lot_size": 40,
-            "status": "open",
-            "note": "Currently open for subscription (curated placeholder).",
+            "note": "Value retail IPO (fallback placeholder).",
         },
         {
             "id": "inventurus-2026",
@@ -93,7 +192,7 @@ def _universe() -> list[dict[str, Any]]:
             "price_band": "₹1,290 – ₹1,326",
             "lot_size": 11,
             "status": "recent",
-            "note": "Closed; listing expected (curated placeholder).",
+            "note": "Closed; listing expected (fallback placeholder).",
         },
         {
             "id": "zomato-2025",
@@ -106,52 +205,29 @@ def _universe() -> list[dict[str, Any]]:
             "price_band": "₹72 – ₹76",
             "lot_size": 195,
             "status": "listed",
-            "note": "Listed at premium (curated placeholder).",
-        },
-        {
-            "id": "ecom-2025",
-            "name": "Ecom Express Ltd",
-            "symbol": "ECOM",
-            "exchange": "NSE/BSE",
-            "open_date": _iso(today - timedelta(days=21)),
-            "close_date": _iso(today - timedelta(days=19)),
-            "listing_date": _iso(today - timedelta(days=14)),
-            "price_band": "₹756 – ₹798",
-            "lot_size": 18,
-            "status": "listed",
-            "note": "E-commerce logistics IPO (curated placeholder).",
-        },
-        {
-            "id": "unicom-2025",
-            "name": "Unicommerce eSolutions",
-            "symbol": "UNICOM",
-            "exchange": "NSE/BSE",
-            "open_date": _iso(today - timedelta(days=28)),
-            "close_date": _iso(today - timedelta(days=26)),
-            "listing_date": _iso(today - timedelta(days=21)),
-            "price_band": "₹102 – ₹108",
-            "lot_size": 138,
-            "status": "listed",
-            "note": "E-commerce SaaS IPO (curated placeholder).",
+            "note": "Listed at premium (fallback placeholder).",
         },
     ]
 
 
+# ── Public read tools ────────────────────────────────────────────────────
 async def list_all() -> dict[str, Any]:
-    """The full curated IPO calendar (upcoming + recent/listed)."""
-    rows = _universe()
-    return {"ok": True, "count": len(rows), "source": "sample", "ipos": rows}
+    """The full IPO calendar (upcoming + open + recent + listed)."""
+    rows, source = _live_or_fallback()
+    return {"ok": True, "count": len(rows), "source": source, "ipos": rows}
 
 
 async def list_upcoming() -> dict[str, Any]:
-    """IPOs that are upcoming or currently open for subscription."""
-    rows = [r for r in _universe() if r["status"] in {"upcoming", "open"}]
+    """IPOs that are upcoming, draft, or currently open for subscription."""
+    rows, source = _live_or_fallback()
+    rows = [r for r in rows if r["status"] in {"upcoming", "open", "draft"}]
     rows.sort(key=lambda r: r["open_date"])
-    return {"ok": True, "count": len(rows), "source": "sample", "ipos": rows}
+    return {"ok": True, "count": len(rows), "source": source, "ipos": rows}
 
 
 async def list_recent() -> dict[str, Any]:
     """Recently closed or listed IPOs (newest listing first)."""
-    rows = [r for r in _universe() if r["status"] in {"recent", "listed"}]
+    rows, source = _live_or_fallback()
+    rows = [r for r in rows if r["status"] in {"recent", "listed"}]
     rows.sort(key=lambda r: r["listing_date"], reverse=True)
-    return {"ok": True, "count": len(rows), "source": "sample", "ipos": rows}
+    return {"ok": True, "count": len(rows), "source": source, "ipos": rows}
