@@ -41,7 +41,7 @@ toolsets:
   - web
 
 agent:
-  max_turns: 12
+  max_turns: 20
   default_personality: human
   reasoning_effort: false
   verbose: false

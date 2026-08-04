@@ -17,6 +17,8 @@ from fastmcp import FastMCP
 from backend.modules.db import dispose
 from backend.modules.journal.logic import (
     complete_day as _complete_day,
+    delete_expense as _delete_expense,
+    delete_workout as _delete_workout,
     get_entry as _get_entry,
     get_mood_streak as _get_mood_streak,
     log_expense as _log_expense,
@@ -77,6 +79,18 @@ async def log_expense(amount: float, category: str = "", date: str = "", raw_tex
 async def log_workout(activity: str = "workout", muscle_groups: list = None, date: str = "", raw_text: str = "") -> dict:
     """Log a workout row (activity + muscle_groups[])."""
     return await _log_workout(activity, muscle_groups, date, raw_text)
+
+
+@mcp.tool()
+async def delete_expense(spending_id: str) -> dict:
+    """Remove a specific spending row by id (self-correction for accidental logs)."""
+    return await _delete_expense(spending_id)
+
+
+@mcp.tool()
+async def delete_workout(workout_id: str) -> dict:
+    """Remove a specific workout row by id (self-correction for accidental logs)."""
+    return await _delete_workout(workout_id)
 
 
 @mcp.tool()

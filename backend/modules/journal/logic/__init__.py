@@ -490,6 +490,42 @@ async def log_workout(
         return {"ok": False, "message": str(exc)}
 
 
+async def delete_expense(spending_id: str) -> dict[str, Any]:
+    """Remove a specific spending row by id (self-correction for accidental logs)."""
+    if not spending_id or not spending_id.strip():
+        return {"ok": False, "message": "spending_id is required"}
+    try:
+        async with session_factory()() as db:
+            r = await db.execute(select(Spending).where(Spending.id == spending_id.strip()))
+            row = r.scalar_one_or_none()
+            if row is None:
+                return {"ok": False, "message": f"no spending row with id {spending_id}"}
+            await db.delete(row)
+            await db.commit()
+            return {"ok": True, "deleted": spending_id, "amount": row.amount, "category": row.category}
+    except Exception as exc:  # pragma: no cover
+        logger.warning("delete expense failed: %s", exc)
+        return {"ok": False, "message": str(exc)}
+
+
+async def delete_workout(workout_id: str) -> dict[str, Any]:
+    """Remove a specific workout row by id (self-correction for accidental logs)."""
+    if not workout_id or not workout_id.strip():
+        return {"ok": False, "message": "workout_id is required"}
+    try:
+        async with session_factory()() as db:
+            r = await db.execute(select(Workout).where(Workout.id == workout_id.strip()))
+            row = r.scalar_one_or_none()
+            if row is None:
+                return {"ok": False, "message": f"no workout row with id {workout_id}"}
+            await db.delete(row)
+            await db.commit()
+            return {"ok": True, "deleted": workout_id, "activity": row.activity}
+    except Exception as exc:  # pragma: no cover
+        logger.warning("delete workout failed: %s", exc)
+        return {"ok": False, "message": str(exc)}
+
+
 async def get_mood_streak() -> dict[str, Any]:
     """Consecutive days with a diary entry+mood from today backwards."""
     try:
