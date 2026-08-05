@@ -1,4 +1,9 @@
-const BASE = (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "");
+const CONFIGURED_BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "");
+export const API_BASE = CONFIGURED_BASE || (
+  typeof window === "undefined"
+    ? "http://localhost:8000"
+    : `${window.location.protocol}//${window.location.hostname}:8000`
+);
 
 export async function api<T = unknown>(
   path: string,
@@ -8,7 +13,7 @@ export async function api<T = unknown>(
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== "") qs.set(k, String(v));
   }
-  const url = `${BASE}/api${path}${qs.toString() ? `?${qs}` : ""}`;
+  const url = `${API_BASE}/api${path}${qs.toString() ? `?${qs}` : ""}`;
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     const body = await res.text();

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { api, fmtDate } from "../../lib/api";
+import { API_BASE, api, fmtDate } from "../../lib/api";
 import PageHeader from "../../components/PageHeader";
 
 type Strategy = {
@@ -184,8 +184,7 @@ export default function Finance() {
     setRunning(true);
     setError("");
     try {
-      const base = (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "");
-      const res = await fetch(`${base}/api/finance/run-eod`, {
+       const res = await fetch(`${API_BASE}/api/finance/run-eod`, {
         method: "POST",
         cache: "no-store",
       });
