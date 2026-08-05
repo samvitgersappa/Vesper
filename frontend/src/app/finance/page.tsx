@@ -147,7 +147,7 @@ export default function Finance() {
         setNavData(n);
       } catch {}
     })();
-  }, []);
+  }, [range]);
 
   useEffect(() => {
     (async () => {
@@ -233,7 +233,9 @@ export default function Finance() {
       cash += t.cash?.available ?? 0;
       invested += hv;
       positions += t.holdings?.length ?? 0;
-      if (t.day_pnl_pct != null && t.total_equity != null) dayRs += (t.day_pnl_pct / 100) * t.total_equity;
+      if (t.day_pnl_pct != null && t.total_equity != null) {
+        dayRs += t.total_equity * (t.day_pnl_pct / (100 + t.day_pnl_pct));
+      }
     }
     const dayPct = value ? (dayRs / value) * 100 : null;
     return { value, cash, invested, positions, dayRs, dayPct, nTraders: active.length };
@@ -351,7 +353,7 @@ export default function Finance() {
               <span className="stat-label">Invested</span>
               <div className="stat-num">{inr(summary?.invested)}</div>
               <div className="stat-sub">
-                {summary ? ((summary.invested / summary.value) * 100).toFixed(0) : 0}% of equity deployed
+                {summary?.value ? ((summary.invested / summary.value) * 100).toFixed(0) : 0}% of equity deployed
               </div>
             </div>
             <div className="stat-card">
@@ -1080,7 +1082,11 @@ function CatalystInsights() {
 
 // ── Sparkline (per-trader NAV mini-chart) ─────────────────────────────
 function SparkLine({ data, color }: { data: NavRow[]; color: string }) {
-  const pts = data.map(d => d.total_equity).filter(v => v != null && !isNaN(v)) as number[];
+  const pts = data
+    .slice()
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .map(d => d.total_equity)
+    .filter(v => v != null && !isNaN(v)) as number[];
   if (pts.length < 2) return null;
   const min = Math.min(...pts), max = Math.max(...pts), range = max - min || 1;
   const w = pts.length * 3 + 2, h = 48;
@@ -1097,25 +1103,28 @@ function PortfolioNavChart({ nav, meta }: { nav: AnyDict; meta: Record<string,an
   const navObj = nav.nav || nav;
   const traders = Object.keys(navObj).filter(k => k !== 'nifty');
   if (traders.length < 2) return null;
-  const firstRows = navObj[traders[0]] as any[] | undefined;
-  if (!firstRows) return null;
-  const dates = firstRows.map((r: any) => String(r.date));
+  const allRows = traders.flatMap((t) => (navObj[t] as NavRow[] | undefined) ?? []);
+  const dates = Array.from(new Set(allRows.map((r) => String(r.date)))).sort();
   if (dates.length < 2) return null;
   const niftyRaw = (nav.nifty || []) as {date:string;close:number;cumulative_pct:number}[];
   const niftyMap = new Map(niftyRaw.map(r => [String(r.date), r.cumulative_pct] as [string, number]));
   const series: CurveSeries[] = [];
   for (let i = 0; i < traders.length; i++) {
     const t = traders[i];
-    const rows = navObj[t] as NavRow[] | undefined;
-    if (!rows || rows.length < 2) continue;
+     const rows = (navObj[t] as NavRow[] | undefined)?.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+     if (!rows || rows.length < 2) continue;
     const eq = rows.map(r => Number(r.total_equity));
-    let base: number = 1;
-    for (const v of eq) { if (!isNaN(v) && v > 0) { base = v; break; } }
-    series.push({
-      label: meta[t]?.short || t,
-      color: NAV_COLORS[i % NAV_COLORS.length],
-      pts: eq.map(v => !isNaN(v) ? (v / base - 1) * 100 : null),
-    });
+     let base: number = 1;
+     for (const v of eq) { if (!isNaN(v) && v > 0) { base = v; break; } }
+     const returns = new Map(rows.map((r) => [String(r.date), Number(r.total_equity) / base - 1]));
+     series.push({
+       label: meta[t]?.short || t,
+       color: NAV_COLORS[i % NAV_COLORS.length],
+       pts: dates.map((d) => {
+         const v = returns.get(d);
+         return v != null && !isNaN(v) ? v * 100 : null;
+       }),
+     });
   }
   if (niftyMap.size > 0) {
     series.push({
@@ -1124,7 +1133,7 @@ function PortfolioNavChart({ nav, meta }: { nav: AnyDict; meta: Record<string,an
     });
   }
   return <div className="card" style={{marginBottom:16}}>
-    <h2>Portfolio Value Over Time</h2>
+     <h2>Portfolio Return Over Time</h2>
     <div className="legend" style={{marginBottom:8}}>
       {series.map(s => <span key={s.label}><i style={{background:s.color,border:s.dashed?'1px dashed '+s.color:'none'}}/>{s.label}</span>)}
     </div>

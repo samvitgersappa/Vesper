@@ -264,7 +264,6 @@ async def nav(strategy: str = "", limit: int = 60) -> dict[str, Any]:
     stmt = (
         select(PaperNavHistory)
         .order_by(PaperNavHistory.date.desc())
-        .limit(limit)
     )
     if strategy:
         stmt = stmt.where(PaperNavHistory.trader_id == strategy)
@@ -286,6 +285,7 @@ async def nav(strategy: str = "", limit: int = 60) -> dict[str, Any]:
         )
     for tid in by_trader:
         by_trader[tid].sort(key=lambda d: d["date"], reverse=True)
+        by_trader[tid] = by_trader[tid][:limit]
         # Older snapshots may not have stored cumulative PnL; derive it from
         # the first NAV in the returned series so each trader gets a value.
         series = list(reversed(by_trader[tid]))
