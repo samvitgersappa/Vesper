@@ -34,6 +34,8 @@ async def scores(date: Optional[str] = None, limit: int = 50) -> dict[str, Any]:
     if date:
         where = "WHERE date = :d"
         params["d"] = date
+    else:
+        where = "WHERE date = (SELECT MAX(date) FROM finance.catalyst_scores)"
     async with session_factory()() as db:
         rows = (await db.execute(
             text(
@@ -173,6 +175,8 @@ async def news(date: Optional[str] = None, limit: int = 100) -> dict[str, Any]:
     if date:
         where = "WHERE date = :d"
         params["d"] = date
+    else:
+        where = "WHERE date = (SELECT MAX(date) FROM finance.catalyst_news)"
     async with session_factory()() as db:
         rows = (await db.execute(
             text(

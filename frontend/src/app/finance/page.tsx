@@ -790,6 +790,7 @@ function CurveChart({ axes, series, height = 250 }: { axes: string[]; series: Cu
 
 // ── Catalyst Swing Trader (Trader 6) ────────────────────────────────────
 type CatalystScore = {
+  date?: string;
   symbol: string;
   sector?: string;
   composite_score?: number;
@@ -919,8 +920,8 @@ function CatalystPanel() {
               </tr>
             </thead>
             <tbody>
-              {positions.map((p) => (
-                <tr key={p.symbol}>
+               {positions.map((p) => (
+                 <tr key={`${p.symbol}-${p.entry_date}`}>
                   <td><span className="sym">{p.symbol.replace(/\.NS$/, "")}</span></td>
                   <td className="num">{p.qty.toLocaleString("en-IN")}</td>
                   <td className="num">{price(p.entry_price)}</td>
@@ -1043,7 +1044,7 @@ function CatalystInsights() {
             {scores.map((s) => {
               const symNews = newsBySymbol[s.symbol] ?? [];
               return (
-                <tr key={s.symbol}>
+                 <tr key={`${s.date ?? "latest"}-${s.symbol}`}>
                   <td className="muted">{s.rank ?? ""}</td>
                   <td><span className="sym">{s.symbol.replace(/\.NS$/, "")}</span></td>
                   <td className="muted wrap sec-cell">{s.sector}</td>
@@ -1051,7 +1052,9 @@ function CatalystInsights() {
                   <td><SignalBadge signal={s.catalyst_signal ?? s.verdict?.signal} /></td>
                   <td className="num">{s.verdict?.confidence != null ? `${(s.verdict.confidence * 100).toFixed(0)}%` : "—"}</td>
                   <td className="num">{s.verdict?.urgency != null ? `${(s.verdict.urgency * 100).toFixed(0)}%` : "—"}</td>
-                  <td className="muted wrap rat-cell">{s.verdict?.rationale}</td>
+                   <td className="muted wrap rat-cell">
+                     {s.verdict?.rationale || (s.llm_analyzed ? "No concrete catalyst found." : "LLM verdict unavailable.")}
+                   </td>
                   <td className="wrap news-cell">
                     {symNews.length === 0 ? (
                       <span className="muted">—</span>
