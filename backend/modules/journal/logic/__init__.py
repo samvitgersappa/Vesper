@@ -34,7 +34,7 @@ from backend.modules.journal.vault import (
     vault_root,
     write_entry_file,
 )
-from backend.events.catalog import DAILY_JOURNAL_COMPLETED, JOURNAL_CREATED
+from backend.events.catalog import DAILY_JOURNAL_COMPLETED, JOURNAL_CREATED, KNOWLEDGE_INDEXED
 
 logger = logging.getLogger("vesper.journal")
 
@@ -333,6 +333,9 @@ async def write_entry(
         "mood": (mood or "").strip(),
         "word_count": file_res["word_count"],
     })
+    # Reactive garden rebuild: every vault write triggers a KnowledgeIndexed
+    # event so the Quartz Second Brain picks up new journal entries immediately.
+    publish(KNOWLEDGE_INDEXED, {"path": file_abs(file_res["path"] or ""), "action": "journal_entry"})
     return {
         "ok": True,
         "entry_id": meta.get("entry_id"),
