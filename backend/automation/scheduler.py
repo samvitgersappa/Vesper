@@ -278,7 +278,9 @@ def run() -> None:
                 from backend.automation.jobs.finance import fetch_equity, compute_factors
                 eq_res = await fetch_equity()
                 logger.info("catch-up: fetch_equity done (%s rows)", eq_res.get("rows", "?"))
-                # Chain compute_factors after fresh equity so EOD has current factors.
+                # Small delay between yfinance calls to avoid rate-limiting.
+                import time as _time2
+                _time2.sleep(8)
                 fac_res = await compute_factors()
                 logger.info("catch-up: compute_factors done (%s rows)", fac_res.get("rows", "?"))
             asyncio.run(_catch_up_data())

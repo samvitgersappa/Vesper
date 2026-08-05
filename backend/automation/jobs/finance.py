@@ -16,6 +16,7 @@ writer — plan §16).
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -28,6 +29,7 @@ from backend.db import feature_store
 logger = logging.getLogger("vesper.automation.finance")
 
 _DOWNLOAD_CHUNK = 40  # yfinance bulk downloads silently drop tickers beyond this
+_CHUNK_DELAY = 3.0    # seconds between chunks — avoid rate limiting
 
 
 def _now() -> str:
@@ -122,6 +124,10 @@ async def fetch_equity(limit: int = 200, start: str = "2018-01-01") -> dict:
                     })
             except Exception:  # pragma: no cover - skip a bad ticker
                 failed.append(symbol)
+
+        # Space yfinance requests to avoid rate-limiting (3s between chunks).
+        if i + _DOWNLOAD_CHUNK < len(symbols):
+            time.sleep(_CHUNK_DELAY)
 
     if not rows:
         await _record_run("fetch_equity", "degraded", "no rows parsed")
