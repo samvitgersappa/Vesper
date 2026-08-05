@@ -85,6 +85,24 @@ def _price_map() -> dict[str, float]:
     return {str(s): round(float(v), 4) for s, v in latest.items() if pd.notna(v) and float(v) > 0}
 
 
+async def _mark_to_market(db, prices: dict[str, float]) -> int:
+    """Refresh catalyst holdings before exits and NAV calculations."""
+    updated = 0
+    rows = (await db.execute(
+        text("SELECT ticker, last_price FROM finance.paper_holdings WHERE trader_id = :t"),
+        {"t": TRADER_ID},
+    )).all()
+    for row in rows:
+        price = prices.get(row.ticker)
+        if price is not None and (row.last_price is None or float(row.last_price) != price):
+            await db.execute(
+                text("UPDATE finance.paper_holdings SET last_price = :p WHERE trader_id = :t AND ticker = :s"),
+                {"p": _q(price), "t": TRADER_ID, "s": row.ticker},
+            )
+            updated += 1
+    return updated
+
+
 def _atr(symbol: str, period: int = _ATR_PERIOD) -> Optional[float]:
     """14-day ATR from equity_daily OHLC (feature store)."""
     try:
@@ -262,11 +280,19 @@ async def _open_count(db, date: str) -> tuple[int, int]:
     n_today = (await db.execute(
         text(
             "SELECT COUNT(*) FROM finance.catalyst_positions "
-            "WHERE status = 'open' AND entry_date = :d"
+            "WHERE entry_date = :d"
         ),
         {"d": date},
     )).scalar_one()
     return int(n_pos), int(n_today)
+
+
+async def _held_symbols(db) -> set[str]:
+    rows = (await db.execute(
+        text("SELECT ticker FROM finance.paper_holdings WHERE trader_id = :t"),
+        {"t": TRADER_ID},
+    )).all()
+    return {str(row.ticker) for row in rows}
 
 
 async def _enter(
@@ -388,8 +414,8 @@ async def _snapshot_nav(db, d: str, cash: float, n_pos: int) -> float:
     total_equity = cash + float(held_value or 0)
     # Compute day-over-day PnL from the previous NAV row.
     prev = (await db.execute(
-        text("SELECT total_equity FROM finance.paper_nav_history WHERE trader_id = :t ORDER BY date DESC LIMIT 1"),
-        {"t": TRADER_ID},
+        text("SELECT total_equity FROM finance.paper_nav_history WHERE trader_id = :t AND date < :d ORDER BY date DESC LIMIT 1"),
+        {"t": TRADER_ID, "d": d},
     )).scalar()
     day_pnl = None
     if prev is not None and prev > 0:
@@ -425,6 +451,10 @@ async def run_risk(date: str | None = None) -> dict[str, Any]:
         await record_run("catalyst_risk", "degraded", "no prices available")
         return {"ok": True, "job": "catalyst_risk", "degraded": True, "note": "no prices"}
 
+    async with session_factory()() as db:
+        await _mark_to_market(db, prices)
+        await db.commit()
+
     exits, _kept = await _check_exits(d, prices)
 
     async with session_factory()() as db:
@@ -453,12 +483,17 @@ async def run_day(date: str | None = None) -> dict[str, Any]:
         await record_run("catalyst_paper_trade", "degraded", "no prices available")
         return {"ok": True, "job": "catalyst_paper_trade", "degraded": True, "note": "no prices"}
 
+    async with session_factory()() as db:
+        await _mark_to_market(db, prices)
+        await db.commit()
+
     exits, _kept = await _check_exits(d, prices)
 
     entered: list[dict] = []
     candidates = await _funnel_candidates(d)
     async with session_factory()() as db:
         n_pos, n_today = await _open_count(db, d)
+        held_symbols = await _held_symbols(db)
         acct = (await db.execute(
             text("SELECT available_cash FROM finance.paper_account WHERE trader_id = :t"),
             {"t": TRADER_ID},
@@ -476,6 +511,8 @@ async def run_day(date: str | None = None) -> dict[str, Any]:
         for cand in candidates:
             if n_pos >= MAX_CONCURRENT_POSITIONS or n_today >= MAX_ENTRIES_PER_DAY:
                 break
+            if cand["symbol"] in held_symbols:
+                continue
             if n_pos < MIN_CONCURRENT_POSITIONS or cand["composite_score"] >= 0.12:
                 entered_ = await _enter(db, d, cand["symbol"], cand, equity, cash)
                 if entered_:
@@ -483,6 +520,7 @@ async def run_day(date: str | None = None) -> dict[str, Any]:
                     cash -= float(entered_["fill_price"]) * int(entered_["qty"])
                     n_pos += 1
                     n_today += 1
+                    held_symbols.add(cand["symbol"])
 
         await db.execute(
             text("UPDATE finance.paper_account SET available_cash = :c WHERE trader_id = :t"),

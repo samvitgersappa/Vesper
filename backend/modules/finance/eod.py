@@ -386,8 +386,8 @@ async def run_eod(strategy_ids: list[str] | None = None) -> dict[str, Any]:
                 total_equity = cash + final_value
                 # Compute day-over-day PnL from the previous row.
                 prev = (await db.execute(
-                    text("SELECT total_equity FROM finance.paper_nav_history WHERE trader_id = :t ORDER BY date DESC LIMIT 1"),
-                    {"t": tid},
+                    text("SELECT total_equity FROM finance.paper_nav_history WHERE trader_id = :t AND date < :d ORDER BY date DESC LIMIT 1"),
+                    {"t": tid, "d": today},
                 )).scalar()
                 day_pnl = None
                 if prev is not None and prev > 0:

@@ -286,6 +286,13 @@ async def nav(strategy: str = "", limit: int = 60) -> dict[str, Any]:
         )
     for tid in by_trader:
         by_trader[tid].sort(key=lambda d: d["date"], reverse=True)
+        # Older snapshots may not have stored cumulative PnL; derive it from
+        # the first NAV in the returned series so each trader gets a value.
+        series = list(reversed(by_trader[tid]))
+        base = series[0].get("total_equity") if series else None
+        if base and base > 0:
+            for row in series:
+                row["cumulative_pnl_pct"] = _q((row["total_equity"] / base - 1) * 100)
 
     return {"nav": by_trader, "nifty": _nifty_series(sorted(_nav_dates(by_trader)))}
 

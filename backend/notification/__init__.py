@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
+from pathlib import Path
 from datetime import date, timedelta
 
 import httpx
@@ -33,6 +35,13 @@ from backend.events.catalog import (
 from backend.modules.common import publish  # noqa: F401 (exported for subscribers)
 
 logger = logging.getLogger("vesper.notification")
+_journal_alerted_dates: set[str] = set()
+
+
+def _journal_notification_snoozed(date: str) -> bool:
+    """Allow an operational one-day snooze without disabling journal writes."""
+    directory = Path(os.environ.get("VESPER_JOURNAL_SNOOZE_DIR", "/tmp"))
+    return (directory / f"vesper-journal-notification-snooze-{date}").exists()
 
 # anti-nagging: undated, reminder-like captures never surface here (addendum §5).
 # They only appear in Weekly Review (hermes-config/cron/weekly_review).
@@ -151,4 +160,10 @@ async def notify_event(event: str, payload: dict) -> None:
         pass  # covered by the scheduled triage sweep (avoid double pings)
     elif event == DAILY_JOURNAL_COMPLETED:
         if not payload.get("complete"):
+            event_date = str(payload.get("date", ""))
+            from zoneinfo import ZoneInfo
+            today = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+            if event_date != today or event_date in _journal_alerted_dates or _journal_notification_snoozed(event_date):
+                return
+            _journal_alerted_dates.add(event_date)
             await send_telegram("📝 Today's journal wasn't completed — backfill in the morning brief.")
