@@ -386,18 +386,27 @@ async def _snapshot_nav(db, d: str, cash: float, n_pos: int) -> float:
         {"t": TRADER_ID},
     )).scalar_one()
     total_equity = cash + float(held_value or 0)
+    # Compute day-over-day PnL from the previous NAV row.
+    prev = (await db.execute(
+        text("SELECT total_equity FROM finance.paper_nav_history WHERE trader_id = :t ORDER BY date DESC LIMIT 1"),
+        {"t": TRADER_ID},
+    )).scalar()
+    day_pnl = None
+    if prev is not None and prev > 0:
+        day_pnl = ((total_equity / prev) - 1) * 100
     await db.execute(
         text(
             "INSERT INTO finance.paper_nav_history "
-            "(trader_id, date, total_equity, cash, holdings_value, n_positions) "
-            "VALUES (:t, :d, :e, :c, :h, :n) "
+            "(trader_id, date, total_equity, cash, holdings_value, n_positions, day_pnl_pct) "
+            "VALUES (:t, :d, :e, :c, :h, :n, :dp) "
             "ON CONFLICT (trader_id, date) DO UPDATE SET "
             "total_equity = EXCLUDED.total_equity, cash = EXCLUDED.cash, "
-            "holdings_value = EXCLUDED.holdings_value, n_positions = EXCLUDED.n_positions"
+            "holdings_value = EXCLUDED.holdings_value, n_positions = EXCLUDED.n_positions, "
+            "day_pnl_pct = EXCLUDED.day_pnl_pct"
         ),
         {
             "t": TRADER_ID, "d": d, "e": _q(total_equity), "c": _q(cash),
-            "h": _q(float(held_value or 0)), "n": n_pos,
+            "h": _q(float(held_value or 0)), "n": n_pos, "dp": day_pnl,
         },
     )
     return float(total_equity)

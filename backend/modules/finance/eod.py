@@ -381,19 +381,28 @@ async def run_eod(strategy_ids: list[str] | None = None) -> dict[str, Any]:
                     {"c": _q(cash), "t": tid},
                 )
 
-                # NAV history (mark-to-market).
+                # NAV history (mark-to-market) with day-over-day PnL.
                 final_value = sum(qty * (prices.get(sym, holdings_last.get(sym, 0)) or 0) for sym, qty in holdings.items())
                 total_equity = cash + final_value
+                # Compute day-over-day PnL from the previous row.
+                prev = (await db.execute(
+                    text("SELECT total_equity FROM finance.paper_nav_history WHERE trader_id = :t ORDER BY date DESC LIMIT 1"),
+                    {"t": tid},
+                )).scalar()
+                day_pnl = None
+                if prev is not None and prev > 0:
+                    day_pnl = ((total_equity / prev) - 1) * 100
                 await db.execute(
                     text(
                         "INSERT INTO finance.paper_nav_history "
-                        "(trader_id, date, total_equity, cash, holdings_value, n_positions) "
-                        "VALUES (:t, :d, :eq, :c, :hv, :n) "
+                        "(trader_id, date, total_equity, cash, holdings_value, n_positions, day_pnl_pct) "
+                        "VALUES (:t, :d, :eq, :c, :hv, :n, :dp) "
                         "ON CONFLICT (trader_id, date) DO UPDATE SET "
                         "total_equity = EXCLUDED.total_equity, cash = EXCLUDED.cash, "
-                        "holdings_value = EXCLUDED.holdings_value, n_positions = EXCLUDED.n_positions"
+                        "holdings_value = EXCLUDED.holdings_value, n_positions = EXCLUDED.n_positions, "
+                        "day_pnl_pct = EXCLUDED.day_pnl_pct"
                     ),
-                    {"t": tid, "d": today, "eq": _q(total_equity), "c": _q(cash), "hv": _q(final_value), "n": len(holdings)},
+                    {"t": tid, "d": today, "eq": _q(total_equity), "c": _q(cash), "hv": _q(final_value), "n": len(holdings), "dp": day_pnl},
                 )
                 await db.commit()
                 publish(PORTFOLIO_NAV_UPDATED, {"trader_id": tid, "date": today, "equity": _q(total_equity)})
