@@ -254,6 +254,38 @@ def run() -> None:
         if weekday >= 5:
             logger.info("catch-up: weekend (%s) — paper_trade_eod only runs Mon–Fri, skip", today)
             return
+
+        # 0. Data pipeline: if fetch_equity missed its 06:00 window (worker
+        #    was restarted, server slept, etc.), pull fresh equity data now
+        #    so paper_trade_eod doesn't price off stale prices.
+        try:
+            from backend.modules.db import session_factory
+            from sqlalchemy import text
+            async def _catch_up_data():
+                async with session_factory()() as db:
+                    already = (await db.execute(
+                        text(
+                            "SELECT 1 FROM finance.job_runs "
+                            "WHERE job_name = 'fetch_equity' "
+                            "AND (status = 'ok' OR status = 'holiday_skip') "
+                            "AND finished_at LIKE :today"
+                        ), {"today": today + "%"},
+                    )).scalar()
+                if already:
+                    logger.info("catch-up: fetch_equity already ran today — skip")
+                    return
+                logger.info("catch-up: fetch_equity missed today — pulling fresh market data")
+                from backend.automation.jobs.finance import fetch_equity, compute_factors
+                eq_res = await fetch_equity()
+                logger.info("catch-up: fetch_equity done (%s rows)", eq_res.get("rows", "?"))
+                # Chain compute_factors after fresh equity so EOD has current factors.
+                fac_res = await compute_factors()
+                logger.info("catch-up: compute_factors done (%s rows)", fac_res.get("rows", "?"))
+            asyncio.run(_catch_up_data())
+        except Exception as exc:
+            logger.warning("catch-up data pipeline failed: %s", exc)
+
+        # 1. Classic EOD traders.
         try:
             from backend.modules.db import session_factory
             from sqlalchemy import text
