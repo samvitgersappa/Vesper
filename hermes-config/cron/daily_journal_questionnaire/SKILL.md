@@ -34,6 +34,30 @@ same order every day). Do **not** re-read the YAML per question — load once at
 - Before Q5/Q6, read what's already logged today via `journal.log_expense` /
   `journal.log_workout` totals so you ask "anything else?" instead of repeating.
 
+## Journal entry formatting (Obsidian / Quartz graph)
+
+The vault journal must be a **connected graph node**, not flat text. Every entry
+should surface in the Quartz garden with proper wikilinks:
+
+1. **People as wikilinks** — every person you mention must be linked with
+   `[[person-slug]]` (the exact filename stem of their vault note in lower-case).
+   Before writing, use `mcp__knowledge__search` to find people notes under
+   `05 People/`. For people without existing notes, create a one-line stub.
+
+2. **Topic cross-references** — if today mentions a skill, project, or concept
+   that has a vault note (in `03 Knowledge/`, `04 Learning/`, `06 Finance/`),
+   link it with `[[note-slug]]`.
+
+3. **Use `##` section headings** (Mood, Highlights, Workout, Expenses,
+   Reminders, Notes, Connected). This keeps journal entries readable and the
+   Quartz table of contents works.
+
+4. **Create stub People notes as needed.** If a person has no note yet, create
+   a minimal one-liner under `05 People/person-name.md` so the wikilink resolves.
+
+Do NOT exhaustively search — linking 2-3 people and 1-2 topics per entry is
+enough. The graph improves incrementally with each day's links.
+
 ## Persist each answer immediately (§2.4, §6 durability)
 
 Never batch — every answer is written the moment it arrives:
