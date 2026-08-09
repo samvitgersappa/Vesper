@@ -55,11 +55,17 @@ _TYPE_MAP = {
 _HEALTH_RELEVANT_FIELDS = {"category", "contact_frequency_days", "last_contacted"}
 
 VALID_UPDATE_FIELDS = {
-    "company", "occupation", "email", "phone", "bio",
+    "name", "company", "occupation", "email", "phone", "bio",
     "linkedin_url", "twitter_handle", "instagram_handle", "github_username",
     "birthday", "anniversary", "contact_frequency_days",
     "city", "country", "meeting_place", "profile_notes", "nickname",
     "category", "relation_type", "last_contacted",
+    "topics_of_interest", "hobbies",
+}
+
+GROUP_CONTACT_LABELS = {
+    "family", "parents", "grandparents", "grandparent", "siblings",
+    "brothers", "sisters", "children", "kids", "relatives", "colleagues",
 }
 
 
@@ -743,19 +749,29 @@ async def relationship_create_person(
     notes: str = "",
 ) -> dict[str, Any]:
     """Create a person (health_score=1.0); optional initial note."""
+    clean_name = (name or "").strip()
+    normalized_name = re.sub(r"[^a-z0-9]+", " ", clean_name.lower()).strip()
+    if not clean_name:
+        return {"success": False, "message": "A person's individual name is required"}
+    if normalized_name in GROUP_CONTACT_LABELS:
+        return {
+            "success": False,
+            "needs_individual_names": True,
+            "message": f"'{clean_name}' describes a group. Provide each person's name separately.",
+        }
     cat = (category or "NETWORK").upper()
     if cat not in VALID_CATEGORIES:
         cat = "NETWORK"
 
     async with session_factory()() as db:
         existing = await db.execute(
-            select(Person).where(Person.name.ilike(name.strip()))
+            select(Person).where(Person.name.ilike(clean_name))
         )
         if existing.scalar_one_or_none():
-            return {"success": False, "message": f"'{name}' already exists"}
+            return {"success": False, "message": f"'{clean_name}' already exists"}
 
         person = Person(
-            name=name.strip(),
+            name=clean_name,
             company=company or None,
             occupation=occupation or None,
             category=cat,
@@ -802,7 +818,17 @@ async def relationship_update_person(person_id: str, field: str, value: str) -> 
 
         new_value: Any = value
 
-        if field_lower in ("birthday", "anniversary", "last_contacted"):
+        if field_lower == "name":
+            new_value = (value or "").strip()
+            normalized_name = re.sub(r"[^a-z0-9]+", " ", new_value.lower()).strip()
+            if not new_value:
+                return {"success": False, "message": "Name cannot be empty"}
+            if normalized_name in GROUP_CONTACT_LABELS:
+                return {"success": False, "needs_individual_names": True, "message": "Use an individual name, not a group label"}
+            duplicate = await db.execute(select(Person).where(Person.name.ilike(new_value), Person.id != person_id))
+            if duplicate.scalar_one_or_none():
+                return {"success": False, "message": f"'{new_value}' already exists"}
+        elif field_lower in ("birthday", "anniversary", "last_contacted"):
             parsed = _parse_datetime(value.strip())
             if not parsed:
                 return {"success": False, "message": f"Invalid date for {field}. Use ISO format."}
@@ -814,6 +840,8 @@ async def relationship_update_person(person_id: str, field: str, value: str) -> 
                 return {"success": False, "message": "contact_frequency_days must be a number"}
         elif field_lower in ("category", "relation_type"):
             new_value = value.upper()
+        elif field_lower in ("topics_of_interest", "hobbies"):
+            new_value = [item.strip() for item in re.split(r"[,\n]", value or "") if item.strip()]
 
         setattr(p, field_lower, new_value)
         if field_lower in _HEALTH_RELEVANT_FIELDS:

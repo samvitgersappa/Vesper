@@ -74,10 +74,12 @@ Never batch — every answer is written the moment it arrives:
   taxonomy (Food, Travel/Transport, Shopping, Bills/Utilities, Health,
   Entertainment, Other; best-effort, default "Other"); read the day's total back
   for confirmation.
-- Q8 → for each person the user wants remembered, call `relationship.create_person`
-  when no matching contact exists, then call `relationship.create_interaction` with
-  today's date and the connection context. Never claim a contact was saved without
-  a successful tool result.
+- Q8 → resolve each individual person separately. Group labels such as
+  "grandparents", "parents", "family", or "colleagues" are not people: ask for
+  the individual names before creating contacts. For each named person, search
+  first, call `relationship.create_person` only when no match exists, then call
+  `relationship.create_interaction` with today's date and the connection context.
+  Never claim a contact was saved without a successful tool result.
 - Q9 → append the answer to the journal entry as the Tomorrow section; do not
   leave it only in the chat transcript.
 

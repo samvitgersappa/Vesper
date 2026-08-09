@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "../../lib/api";
+import { api, apiWrite } from "../../lib/api";
 import PageHeader from "../../components/PageHeader";
 
 type Person = Record<string, any>;
@@ -11,6 +11,9 @@ export default function People() {
   const [people, setPeople] = useState<Person[]>([]);
   const [selected, setSelected] = useState<Person | null>(null);
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<Person>({});
 
   useEffect(() => {
     const t = setTimeout(async () => {
@@ -29,9 +32,32 @@ export default function People() {
 
   const open = async (id: string) => {
     try {
-      setSelected(await api(`/relationship/person/${id}`));
+      const person = await api<Person>(`/relationship/person/${id}`);
+      setSelected(person);
+      setForm(person);
+      setEditing(false);
     } catch (e: any) {
       setError(e.message);
+    }
+  };
+
+  const save = async () => {
+    if (!selected) return;
+    setSaving(true);
+    setError("");
+    try {
+      const fields = ["name", "nickname", "company", "occupation", "email", "phone", "bio", "profile_notes", "topics_of_interest"];
+      for (const field of fields) {
+        const value = field === "topics_of_interest"
+          ? String(form[field] ?? "")
+          : String(form[field] ?? "");
+        await apiWrite(`/relationship/person/${selected.id}`, "PATCH", { field, value });
+      }
+      await open(selected.id);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -71,7 +97,25 @@ export default function People() {
           <h2>Detail</h2>
           {selected ? (
             <div>
-              <div className="big">{selected.name}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                <div className="big">{selected.name}</div>
+                <button className="pill" onClick={() => setEditing((value) => !value)}>{editing ? "Close" : "Edit card"}</button>
+              </div>
+              {editing && (
+                <div className="card" style={{ margin: "16px 0", display: "grid", gap: 10 }}>
+                  {[["name", "Name"], ["nickname", "Nickname"], ["company", "Company"], ["occupation", "Occupation"], ["email", "Email"], ["phone", "Phone"], ["bio", "Bio"], ["profile_notes", "Profile notes"], ["topics_of_interest", "Topics of interest (comma separated)"]].map(([field, label]) => (
+                    <label key={field} style={{ display: "grid", gap: 5 }}>
+                      <span className="muted">{label}</span>
+                      {field === "bio" || field === "profile_notes" ? (
+                        <textarea value={form[field] ?? ""} onChange={(e) => setForm({ ...form, [field]: e.target.value })} />
+                      ) : (
+                        <input value={field === "topics_of_interest" ? (form[field] ?? []).join(", ") : form[field] ?? ""} onChange={(e) => setForm({ ...form, [field]: e.target.value })} />
+                      )}
+                    </label>
+                  ))}
+                  <button className="btn" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save card"}</button>
+                </div>
+              )}
               <p className="muted">
                 {selected.category} · last contact{" "}
                 {selected.last_contacted ?? "—"}
@@ -81,6 +125,9 @@ export default function People() {
                 {Array.isArray(selected.notes) && selected.notes.length > 0 &&
                   ` ${selected.notes.map((note: any) => note.content ?? note.text ?? "").join(" ")}`}
               </p>
+              {selected.topics_of_interest?.length ? (
+                <p className="muted">Topics: {selected.topics_of_interest.join(", ")}</p>
+              ) : null}
               {selected.recent_interactions?.length ? (
                 <ul className="list">
                   {selected.recent_interactions.slice(-5).map((i: any) => (

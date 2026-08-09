@@ -22,6 +22,23 @@ export async function api<T = unknown>(
   return (await res.json()) as T;
 }
 
+export async function apiWrite<T = unknown>(
+  path: string,
+  method: "PATCH" | "POST",
+  body: Record<string, unknown>,
+): Promise<T> {
+  const res = await fetch(`${API_BASE}/api${path}`, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const responseBody = await res.text();
+    throw new Error(`${res.status}: ${responseBody.slice(0, 200)}`);
+  }
+  return (await res.json()) as T;
+}
+
 export function fmtDate(d?: string): string {
   if (!d) return "—";
   return new Date(d.length === 10 ? `${d}T00:00:00` : d).toLocaleDateString(

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
 from backend.modules.activity.logic import recent as activity_recent
 from backend.modules.calendar.logic import birthdays as calendar_birthdays
@@ -56,6 +56,8 @@ from backend.modules.relationship.logic import relationship_get_due_today
 from backend.modules.relationship.logic import relationship_get_stats
 from backend.modules.relationship.logic import relationship_person_detail
 from backend.modules.relationship.logic import relationship_search
+from backend.modules.relationship.logic import relationship_update_person
+from backend.modules.relationship.logic import relationship_add_note
 from backend.modules.study.logic import list_tests as study_list_tests
 from backend.modules.study.logic import percentiles as study_percentiles
 from backend.modules.study.logic import readiness as study_readiness
@@ -88,6 +90,21 @@ async def api_relationship_search(query: str = "", limit: int = 20):
 @router.get("/relationship/person/{person_id}")
 async def api_relationship_person(person_id: str):
     return await relationship_person_detail(person_id)
+
+
+@router.patch("/relationship/person/{person_id}")
+async def api_relationship_update_person(person_id: str, payload: dict[str, Any] = Body(...)):
+    field = str(payload.get("field", ""))
+    value = payload.get("value", "")
+    return await relationship_update_person(person_id, field, str(value))
+
+
+@router.post("/relationship/person/{person_id}/notes")
+async def api_relationship_add_note(person_id: str, payload: dict[str, Any] = Body(...)):
+    content = str(payload.get("content", "")).strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Note content is required")
+    return await relationship_add_note(person_id, content)
 
 
 @router.get("/relationship/due-today")
