@@ -1,5 +1,8 @@
 # Vesper — Personal Intelligence Operating System
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-32%20passed-brightgreen.svg)](tests/)
+
 One folder (`vesper/`) containing a complete personal-intelligence system: a
 Relationship OS, a Finance OS, and a Knowledge OS, unified behind a single
 cognitive engine — **Hermes Agent** (NousResearch/hermes-agent). Hermes Agent is
@@ -24,6 +27,13 @@ holding its own business logic. Hermes contains no domain logic.
       └─────────────────────────────────────────────────────────────┘
 ```
 
+## Open Source
+
+Vesper is open source under the [MIT License](LICENSE). See
+[`NOTICE.md`](NOTICE.md) for third-party attribution and service boundaries,
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for development and pull requests, and
+[`SECURITY.md`](SECURITY.md) for private vulnerability reporting.
+
 ## What this is
 
 Vesper unifies three existing codebases into one Personal Intelligence OS:
@@ -36,6 +46,19 @@ Vesper unifies three existing codebases into one Personal Intelligence OS:
   vault (Obsidian) search, entity Q&A, Telegram/voice via Hermes Agent's
   native gateway, automatic capture routing.
 
+## Attribution and Boundaries
+
+Hermes Agent is Vesper's cognitive engine, but it is installed separately and
+is not included in this repository. Vesper provides the domain modules, MCP
+servers, storage schemas, scheduler, API, frontend, and deployment
+configuration around it. Vesper does not imply endorsement by NousResearch or
+any other upstream project.
+
+Vesper also integrates with Obsidian-compatible Markdown vaults, Quartz,
+Telegram, OpenCode Go, yfinance/NSE data sources, and optional model providers.
+These projects and services have separate licenses and terms; see
+[`NOTICE.md`](NOTICE.md).
+
 ## Repository layout
 
 ```
@@ -47,6 +70,10 @@ vesper/
 ├── plan.md                   # architecture authority (read this first)
 ├── ADDENDUM_SECOND_BRAIN.md  # second-brain / vault / questionnaire decisions
 ├── INVENTORY.md              # Phase 0 inventory of the three source repos
+├── LICENSE                   # MIT license for Vesper's original code
+├── NOTICE.md                 # third-party attribution and service boundaries
+├── CONTRIBUTING.md           # development and contribution guide
+├── SECURITY.md               # private vulnerability reporting policy
 ├── backend/
 │   ├── main.py               # single FastAPI app; APP_MODE=api|worker
 │   ├── modules/<name>/       # one MCP server per module + logic/ (ported logic)
@@ -321,3 +348,24 @@ Phases 0–8 and 10 of `coding_prompt.md` are implemented and verified end-to-en
 notification, automation, web frontend, integration tests). Phase 12 automation
 is fully live with a real yfinance finance pipeline. See `INVENTORY.md` for the
 RAM-spike numbers and `plan.md` for the architecture.
+
+## Contributing and Security
+
+Contributions are welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md),
+which covers setup, tests, data-safety rules, and pull requests. Report
+security vulnerabilities privately using the process in
+[`SECURITY.md`](SECURITY.md). Never publish `.env`, Hermes state, vault notes,
+database dumps, API keys, or Telegram credentials.
+
+## Disclaimer
+
+Vesper is a self-hosted personal-information and paper-trading system. It is
+not financial advice, an investment recommendation, or a guarantee of market
+data accuracy. Paper-trading results do not represent live performance. You
+are responsible for validating data, provider terms, credentials, privacy,
+security, and regulatory obligations before operating a deployment.
+
+## License
+
+Vesper's original code is available under the [MIT License](LICENSE). See
+[`NOTICE.md`](NOTICE.md) for third-party components and external service terms.
