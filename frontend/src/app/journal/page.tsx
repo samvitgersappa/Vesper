@@ -36,7 +36,14 @@ export default function Journal() {
   const activeDays = useMemo(() => days.filter((day) => day.has_entry).length, [days]);
   const weeks = useMemo(() => {
     const padded = [...days];
-    while (padded.length && new Date(`${padded[0].date}T00:00:00`).getDay() !== 0) padded.unshift({ date: "", has_entry: false, complete: false, word_count: 0 });
+    const firstDate = padded[0]?.date;
+    const parsedFirstDate = firstDate ? new Date(`${firstDate}T00:00:00`) : null;
+    const leadingCells = parsedFirstDate && Number.isFinite(parsedFirstDate.getTime())
+      ? parsedFirstDate.getDay()
+      : 0;
+    for (let i = 0; i < leadingCells; i += 1) {
+      padded.unshift({ date: "", has_entry: false, complete: false, word_count: 0 });
+    }
     return Array.from({ length: Math.ceil(padded.length / 7) }, (_, i) => padded.slice(i * 7, i * 7 + 7));
   }, [days]);
 
