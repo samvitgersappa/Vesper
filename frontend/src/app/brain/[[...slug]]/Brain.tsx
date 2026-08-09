@@ -19,6 +19,7 @@ export default function Brain() {
         accent="var(--graph)"
         accentB="#b980f7"
       />
+      <div className="brain-toolbar"><span><i className="live-dot" /> Garden surface</span><span className="muted">Notes become useful when they connect.</span></div>
       <div
         style={{
           border: "1px solid var(--border)",

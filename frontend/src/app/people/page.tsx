@@ -45,15 +45,17 @@ export default function People() {
       />
       {error && <div className="error">{error}</div>}
       <input
+        className="search-command"
         type="search"
         placeholder="Search contacts…"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
-      <div className="grid" style={{ marginTop: 16 }}>
+      <div className="section-intro"><div><h2>People radar</h2><p>Search by name, company, or the context you remember.</p></div><span className="muted">{people.length} matches</span></div>
+      <div className="grid people-layout">
         <div className="card">
           <h2>Results ({people.length})</h2>
-          <ul className="list">
+            <ul className="list people-list">
             {people.map((p) => (
               <li key={p.person_id ?? p.id}>
                 <a className="link" href="#" onClick={(e) => { e.preventDefault(); open(p.person_id ?? p.id); }}>
@@ -62,7 +64,8 @@ export default function People() {
                 <span className="muted">{p.category ?? ""}</span>
               </li>
             ))}
-          </ul>
+            </ul>
+            {!people.length && <div className="data-empty"><div><strong>No one surfaced</strong><span>Try a name, company, or relationship.</span></div></div>}
         </div>
         <div className="card">
           <h2>Detail</h2>
@@ -88,7 +91,7 @@ export default function People() {
               )}
             </div>
           ) : (
-            <div className="muted">Select a person to see details.</div>
+            <div className="data-empty"><div><strong>Choose a person</strong><span>The useful context will appear here.</span></div></div>
           )}
         </div>
       </div>

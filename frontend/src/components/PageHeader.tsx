@@ -26,6 +26,7 @@ export default function PageHeader({
       }
     >
       <div>
+        <div className="page-kicker"><span /> VESPER WORKSPACE</div>
         <h1 className="page-title">{title}</h1>
         {subtitle && <p className="page-sub">{subtitle}</p>}
       </div>

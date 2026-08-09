@@ -258,6 +258,8 @@ export default function Finance() {
       />
       {error && <div className="error">{error}</div>}
 
+      <section className="finance-banner"><div><span className="eyebrow">Paper desk / daily close</span><h2>{totalValue ? inr(totalValue) : "Portfolio awaiting its first close"}</h2><p>Compare six systematic books without losing the details underneath.</p></div><div className="finance-pulse"><span /> data is read-only here</div></section>
+
       {lastRun && (
         <div className="card" style={{ marginBottom: 16 }}>
           <h2>EOD Run · {fmtDate(lastRun.date)}</h2>

@@ -347,6 +347,7 @@ export default function Graph() {
         accentB="#9d7bff"
       />
       {error && <div className="error">{error}</div>}
+      <div className="graph-purpose"><span className="graph-purpose-mark">✦</span><div><strong>Follow a thread</strong><span>Hover to reveal context. Click a node to turn the network into a story.</span></div></div>
       {!raw.nodes.length && !error && (
         <div className="muted">
           Graph is empty — nodes populate as the write adapter processes

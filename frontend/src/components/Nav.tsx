@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 
 const LINKS = [
   { href: "/", label: "Overview", color: "#7aa2ff" },
@@ -19,13 +20,20 @@ const EXTERNAL_LINKS = [{ href: "/brain/", label: "Brain", color: "#b980f7" }];
 
 export default function Nav() {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
 
   return (
-    <nav className="nav">
-      <Link href="/" className="brand">
-        Vesper
-      </Link>
-      <div className="nav-links">
+    <nav className={`nav${open ? " nav-open" : ""}`}>
+      <div className="nav-topline">
+        <Link href="/" className="brand" onClick={() => setOpen(false)}>
+          Vesper
+        </Link>
+        <div className="nav-status"><span className="live-dot" />Local-first workspace</div>
+        <button className="nav-toggle" aria-label="Toggle navigation" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          <span /><span /><span />
+        </button>
+      </div>
+      <div className="nav-links" onClick={() => setOpen(false)}>
         {LINKS.map((l) => {
           const active =
             l.href === "/" ? pathname === "/" : pathname?.startsWith(l.href);

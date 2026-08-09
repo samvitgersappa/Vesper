@@ -71,6 +71,7 @@ export default function Spending() {
         accentB="#ff9d6b"
       />
       {error && <div className="error">{error}</div>}
+      <section className="spending-banner"><div><span className="eyebrow">Money, with less noise</span><h2>{current?.total ? `₹${Number(current.total).toLocaleString("en-IN")} in focus` : "A quiet spending window"}</h2><p>Use the period switcher to see the rhythm, not just the total.</p></div><div className="spending-mark">₹</div></section>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {PERIODS.map((p) => (
@@ -179,7 +180,7 @@ export default function Spending() {
             ))}
           </div>
         ) : (
-          <div className="muted">No spending in this window.</div>
+          <div className="data-empty"><div><strong>No spending here</strong><span>This window is clear.</span></div></div>
         )}
       </div>
 
@@ -215,7 +216,7 @@ export default function Spending() {
               })}
             </ul>
           ) : (
-            <div className="muted">No categories yet.</div>
+            <div className="data-empty"><div><strong>No categories yet</strong><span>Logged expenses will find their shape here.</span></div></div>
           )}
         </div>
 
@@ -248,7 +249,7 @@ export default function Spending() {
             ))}
           </ul>
         ) : (
-          <div className="muted">No expenses logged yet.</div>
+          <div className="data-empty"><div><strong>No expenses logged</strong><span>Nothing to reconcile yet.</span></div></div>
         )}
       </div>
     </>

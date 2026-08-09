@@ -69,6 +69,7 @@ export default function Ipo() {
           Live IPO feed unreachable — showing a curated fallback calendar.
         </div>
       )}
+      <section className="ipo-banner"><div><span className="eyebrow">Primary market watch</span><h2>{rows.length ? `${rows.length} issues worth watching` : "The calendar is quiet"}</h2><p>Issue windows are short. This view keeps the dates, price bands, and lot sizes together.</p></div><span className={`source-chip ${source}`}>{source === "live" ? "● live feed" : source === "sample" ? "○ fallback feed" : "○ waiting"}</span></section>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {TABS.map((t) => (
           <button
@@ -134,7 +135,7 @@ export default function Ipo() {
           })}
         </div>
       ) : (
-        <div className="muted">No {tab} IPOs in the calendar.</div>
+        <div className="data-empty"><div><strong>No {tab} IPOs</strong><span>The market calendar has no entries in this view.</span></div></div>
       )}
     </>
   );

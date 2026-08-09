@@ -115,6 +115,7 @@ export default function Dashboard() {
       <section className="hero">
         <h1>{greeting()}</h1>
         <p className="date-line">{today} · Vesper command center</p>
+        <p className="hero-note"><span className="live-dot" /> A quiet overview of what deserves your attention next.</p>
         <div className="hero-stats">
           <div className="hero-stat">
             <span className="stat-num" style={{ color: "var(--people)" }}>
@@ -145,6 +146,7 @@ export default function Dashboard() {
         </div>
       </section>
 
+      <div className="section-intro"><div><h2>Signals at a glance</h2><p>The few numbers worth carrying into the day.</p></div><span className="muted">refreshes every 30s</span></div>
       <div className="grid">
         {kpi("contacts", "Relationships", data.stats.total_contacts ?? "—", `${data.stats.total_interactions ?? 0} logs · ${due.length} due`)}
         {kpi("streak", "Journal Streak", `${data.streak.current_streak ?? data.streak.streak ?? 0}d`, "mood entries")}
@@ -152,6 +154,7 @@ export default function Dashboard() {
         {kpi("portfolio", "Portfolio Value", totalPortfolio ? `₹${Number(totalPortfolio).toLocaleString("en-IN")}` : "—", `${data.portfolio?.traders?.length ?? 0} paper strategies`)}
       </div>
 
+      <div className="section-intro"><div><h2>Open loops</h2><p>Small things that become important when ignored.</p></div></div>
       <div className="grid">
         <div className="card">
           <h2>Due Today</h2>
@@ -167,7 +170,7 @@ export default function Dashboard() {
               ))}
             </ul>
           ) : (
-            <div className="muted">Nothing due today — a clean slate.</div>
+            <div className="data-empty"><div><strong>Clean slate</strong><span>Nothing due today.</span></div></div>
           )}
         </div>
 
@@ -184,7 +187,7 @@ export default function Dashboard() {
               ))}
             </ul>
           ) : (
-            <div className="muted">None in the next 30 days.</div>
+            <div className="data-empty"><div><strong>No birthdays queued</strong><span>Nothing in the next 30 days.</span></div></div>
           )}
         </div>
 
@@ -196,7 +199,7 @@ export default function Dashboard() {
               <p>{String(data.mood.content ?? data.mood.text ?? "").slice(0, 200)}</p>
             </>
           ) : (
-            <div className="muted">No entry yet today — capture a thought.</div>
+            <div className="data-empty"><div><strong>Blank page</strong><span>Capture a thought to begin today.</span></div></div>
           )}
         </div>
       </div>

@@ -34,6 +34,7 @@ export default function Study() {
         accentB="#9d7bff"
       />
       {error && <div className="error">{error}</div>}
+      <section className="study-banner"><div className="study-ring"><span>{readiness?.readiness && readiness.readiness !== "no_data" ? `${readiness.readiness}%` : "—"}</span></div><div><span className="eyebrow">Readiness signal</span><h2>{tests.length ? `${tests.length} test${tests.length === 1 ? "" : "s"} in the pipeline` : "Build your first checkpoint"}</h2><p>{readiness?.message ?? "A small, regular test is more useful than a heroic revision sprint."}</p></div></section>
       <div className="grid">
         <div className="card">
           <h2>Exam Readiness</h2>
@@ -56,6 +57,7 @@ export default function Study() {
               </li>
             ))}
           </ul>
+          {!tests.length && <div className="data-empty"><div><strong>No checkpoints yet</strong><span>Tests become your learning feedback loop.</span></div></div>}
         </div>
       </div>
     </>
