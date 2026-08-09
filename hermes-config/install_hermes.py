@@ -76,6 +76,26 @@ def log_warn(msg: str) -> None:
     print(f"[hermes-provision] WARN: {msg}")
 
 
+def telegram_delivery_target() -> str:
+    """Return Hermes's explicit Telegram target when one is configured.
+
+    Scheduled delivery needs `telegram:<chat_id>`; bare `telegram` does not
+    identify a destination in Hermes's cron runner. Keep the fallback for
+    installs that intentionally do not configure a home channel.
+    """
+    values: dict[str, str] = {}
+    project_env = REPO / ".env"
+    if project_env.exists():
+        for line in project_env.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.lstrip().startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip()
+    channel = os.environ.get("TELEGRAM_HOME_CHANNEL", "").strip() or values.get("TELEGRAM_HOME_CHANNEL", "").strip()
+    if not channel:
+        channel = os.environ.get("TELEGRAM_ALLOWED_USERS", "").strip() or values.get("TELEGRAM_ALLOWED_USERS", "").strip()
+    return f"telegram:{channel.split(',')[0].strip()}" if channel else "telegram"
+
+
 # ── 1. Secrets into ~/.hermes/.env ─────────────────────────────────────
 def write_hermes_env(env_path: Path) -> None:
     """Copy the project .env values Hermes cares about into ~/.hermes/.env."""
@@ -216,19 +236,20 @@ def register_cron() -> None:
             f"and execute its instructions for today, fully autonomously. "
             f"Write any outputs through the Vesper MCP servers."
         )
+        delivery = telegram_delivery_target() if deliver == "telegram" else deliver
         cmd = [
             HERMES_BIN, "cron", "create",
             schedule,
             prompt,
             "--name", name,
-            "--deliver", deliver,
+            "--deliver", delivery,
             "--skill", skill,
             "--workdir", str(REPO),
         ]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if result.returncode == 0:
-                log(f"cron job {name} registered ({schedule} → {deliver})")
+                log(f"cron job {name} registered ({schedule} → {delivery})")
             else:
                 log_warn(f"cron job {name} failed: {result.stderr.strip()[:300]}")
         except Exception as exc:
