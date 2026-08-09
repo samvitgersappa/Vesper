@@ -8,7 +8,7 @@ platforms: [linux, macos]
 metadata:
   hermes:
     tags: [brief, daily, cross-module, scheduled]
-    cron: "30 7 * * 1-5"
+    cron: "0 6 * * *"
     related_skills: []
 ---
 
@@ -18,7 +18,7 @@ Synthesized cross-module summary delivered proactively via Hermes Agent cron.
 
 ## When to Use
 
-Triggered on schedule (07:30 IST weekdays).
+Triggered every day at 06:00 IST, including weekends.
 
 ## Behavior
 
