@@ -68,6 +68,7 @@ vesper/
 ├── start.sh                  # one-command idempotent bootstrap
 ├── .env.example              # every environment variable the code reads
 ├── plan.md                   # architecture authority (read this first)
+├── TODO.md                   # single authoritative implementation/research backlog
 ├── ADDENDUM_SECOND_BRAIN.md  # second-brain / vault / questionnaire decisions
 ├── INVENTORY.md              # Phase 0 inventory of the three source repos
 ├── LICENSE                   # MIT license for Vesper's original code
