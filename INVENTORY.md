@@ -14,7 +14,8 @@
 > | `VesperAIOS/` (the "hermes-ui" prototype) | `hermes-os/` (contains `hermes-ui/` frontend) |
 > | `ProjectVesper/` | `ProjectVesper/` |
 >
-> All paths below are relative to the repo root, not to `/path/to/source-repository/`.
+> All paths below are relative to the repo root, not to any source repository
+> checkout outside this project.
 
 ---
 
@@ -359,7 +360,7 @@ Auth: JWT HS256, single admin user, all except `/auth/login`, `/health`, `/cron/
 
 ### 4.1 Environment
 - Box: **local macOS (Apple Silicon, 16GB)**, not yet a 4–8GB VPS. Hermes Agent v0.18.2
-  already installed via git (`~/.hermes/hermes-agent/`,
+  already installed via git (a local Hermes checkout,
   Python 3.11.15, install method git) — the standard installer path, so measurements are
   representative of the runtime, not of a bespoke build.
 - **Provider status:** configured against opencode-go / `deepseek-v4-flash` (matches the plan).

@@ -35,13 +35,11 @@ from backend.db.postgres.schemas import all_models  # noqa: F401  (register tabl
 # ── Sources / targets (env-overridable) ──────────────────────────────────────
 PROJECTVESPER_SOURCE_URL = os.environ.get(
     "PROJECTVESPER_SOURCE_URL",
-    "sqlite+aiosqlite:////path/to/source-repository/"
-    "ProjectVesper/backend/data/personanet.db",
+    "sqlite+aiosqlite:///./data/personanet.db",
 )
 QUIVER_SOURCE_SQLITE = os.environ.get(
     "QUIVER_SOURCE_SQLITE",
-    "/path/to/source-repository/Quiver/Quiver/backend/data/"
-    "metadata/quiver_state.sqlite",
+    "./data/quiver_state.sqlite",
 )
 VESPER_DATABASE_URL = os.environ.get(
     "VESPER_DATABASE_URL",
