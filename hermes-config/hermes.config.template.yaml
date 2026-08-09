@@ -8,9 +8,14 @@
 # Model routing (plan.md §14): OpenCode Go hy3 primary, gpt-5.6-luna for
 # long-context / finance·study analyze, local Ollama + Groq as fallbacks.
 
+# All scheduled reasoning jobs use India Standard Time, independent of the VM
+# host timezone.
+timezone: Asia/Kolkata
+
 model:
   default: hy3
   provider: opencode-go
+  base_url: https://opencode.ai/zen/go/v1
 
 providers:
   opencode-go:

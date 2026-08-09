@@ -2,7 +2,7 @@ const CONFIGURED_BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "");
 export const API_BASE = CONFIGURED_BASE || (
   typeof window === "undefined"
     ? "http://localhost:8000"
-    : `${window.location.protocol}//${window.location.hostname}:8000`
+    : ""
 );
 
 export async function api<T = unknown>(

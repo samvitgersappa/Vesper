@@ -17,10 +17,9 @@
 #      token, Telegram user ID) and generate POSTGRES_PASSWORD / JWT_SECRET.
 #   6. Create the full second-brain vault folder structure from scratch
 #      (~/Documents/KnowledgeVault: 00 Journal/YYYY, 03 Knowledge,
-#      99 Assets/images, index.md) and git-init it.
+#      99 Assets/images) and git-init it.
 #   7. Bring up Postgres + Redis (Docker) and wait for health.
-#   8. Apply Alembic migrations + initialise the DuckDB feature store + seed
-#      the 6 paper-trader accounts — every table starts EMPTY (fresh install).
+#   8. Apply Alembic migrations + initialise the empty DuckDB feature store.
 #   9. Provision Hermes Agent (hermes-config/install_hermes.py): write
 #      ~/.hermes/.env, merge ~/.hermes/config.yaml, sync the 8 module MCP
 #      servers, install the capture-router plugin, register the reasoning cron
@@ -52,6 +51,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 REPO_ROOT="$PWD"
+# Hermes reasoning cron schedules are always expressed in India Standard Time,
+# independent of the host VM timezone.
+export HERMES_TIMEZONE="Asia/Kolkata"
 
 BLUE='\033[1;34m'; GREEN='\033[1;32m'; YELLOW='\033[1;33m'; RED='\033[1;31m'; NC='\033[0m'
 info()  { printf "${BLUE}[vesper]${NC} %s\n" "$1"; }
@@ -242,6 +244,12 @@ else
 fi
 
 PGPW="$(env_get POSTGRES_PASSWORD)"; [[ -z "$PGPW" ]] && { PGPW="change-me"; set_env POSTGRES_PASSWORD "$PGPW"; }
+WEB_USER="$(env_get VESPER_BASIC_AUTH_USER)"; [[ -z "$WEB_USER" ]] && { WEB_USER="vesper"; set_env VESPER_BASIC_AUTH_USER "$WEB_USER"; }
+WEB_PASS="$(env_get VESPER_BASIC_AUTH_PASSWORD)"
+if [[ -z "$WEB_PASS" ]]; then
+  WEB_PASS="$(openssl rand -hex 24)"
+  set_env VESPER_BASIC_AUTH_PASSWORD "$WEB_PASS"
+fi
 KEY_OK=$(env_get OPENCODE_GO_API_KEY)
 [[ -z "$KEY_OK" ]] && warn "  OPENCODE_GO_API_KEY is blank — set it in .env for LLM features."
 TBOT=$(env_get TELEGRAM_BOT_TOKEN)
@@ -270,32 +278,9 @@ mkdir -p "$VAULT_PATH_ABS/07 Health"
 mkdir -p "$VAULT_PATH_ABS/08 Career"
 mkdir -p "$VAULT_PATH_ABS/09 Archive"
 mkdir -p "$VAULT_PATH_ABS/99 Assets/images"
-if [[ ! -f "$VAULT_PATH_ABS/index.md" ]]; then
-  cat > "$VAULT_PATH_ABS/index.md" <<'MD'
----
-title: Home
-type: home
-tags: []
----
-
-# Vesper Second Brain
-
-Welcome to your second brain. Everything you capture lands here and is
-organised into areas:
-
-- `00 Journal/` — daily journal entries (`YYYY-MM-DD.md`)
-- `01 Inbox/` — quick captures awaiting organisation
-- `02 Projects/` — active projects with their own notes
-- `03 Knowledge/` — evergreen notes & captured ideas (auto-filed by capture routing)
-- `04 Learning/` — study, books, courses, skills
-- `05 People/` — people & relationships notes
-- `06 Finance/` — money, budgets, trading notes
-- `07 Health/` — fitness, mood, wellbeing
-- `08 Career/` — work, interviews, goals
-- `09 Archive/` — inactive or reference material
-- `99 Assets/` — images and attachments
-MD
-fi
+# Keep the vault folders available, but do not create a home note: a fresh
+# deployment must not project a synthetic note into the intelligence graph.
+rm -f "$VAULT_PATH_ABS/index.md"
 if [[ ! -d "$VAULT_PATH_ABS/.git" ]]; then
   git -C "$VAULT_PATH_ABS" init -b main >/dev/null 2>&1 || true
   git -C "$VAULT_PATH_ABS" add -A >/dev/null 2>&1 || true
@@ -349,15 +334,17 @@ SQL
   ok "  database wiped to empty."
 fi
 
+# Migrations run on the host, so they must use the generated password and the
+# host-published Postgres port rather than the Docker-internal DATABASE_URL.
+set -a; source "$REPO_ROOT/.env"; set +a
+export DATABASE_URL="postgresql+asyncpg://${POSTGRES_USER:-vesper}:${POSTGRES_PASSWORD:-change-me}@localhost:5432/${POSTGRES_DB:-vesper}"
+export REDIS_URL="redis://localhost:6379/0"
 "$PY" -m alembic -c "$REPO_ROOT/backend/db/postgres/alembic.ini" upgrade head
 ok "  migrations applied (alembic head)."
 "$PY" -c "from backend.db.feature_store import ensure_schema; ensure_schema(); print('  feature store ready')"
 "$PY" -m backend.modules.finance.bootstrap
-ok "  6 paper-trader accounts ensured (alpha_tilt, arjun_etf, lowdd_multi_asset, momentum_surge, alpha_generators, catalyst_swing)."
-# Starter people/interactions/reminders so the dashboard + People page + graph
-# are demonstrably working on a brand-new install (idempotent).
-"$PY" -m backend.modules.relationship.seed
-ok "  starter people + interactions seeded (dashboard / people / graph populated)."
+ok "  6 paper-trader accounts initialized at ₹10L each."
+ok "  feature store initialized empty; no starter data seeded."
 
 # ── 9. Provision Hermes Agent ────────────────────────────────────────────
 if [[ "$INSTALL_HERMES" == "1" ]] && [[ -x "$PY" ]]; then
@@ -429,14 +416,18 @@ if [[ "$START_WEB" == "1" ]]; then
     if [[ -n "$VESPER_DOMAIN" ]]; then
       SITE_ADDR="$VESPER_DOMAIN"
     else
-      SITE_ADDR="localhost"
+      SITE_ADDR="http://localhost"
       warn "  VESPER_DOMAIN not set — binding to localhost:80 only."
       warn "  Your phone won't reach it. Set VESPER_DOMAIN=vm-name.ts.net in .env"
       warn "  (requires Tailscale on both the VM and your phone), then re-run start.sh."
     fi
+    WEB_HASH="$(caddy hash-password --plaintext "$WEB_PASS")"
     cat > "$CADDYFILE_TMP" <<CAD
 ${SITE_ADDR} {
 	encode gzip
+	basicauth {
+		${WEB_USER} ${WEB_HASH}
+	}
 
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8000
@@ -458,7 +449,11 @@ ${SITE_ADDR} {
 CAD
     if [[ -f "$REPO_ROOT/.run/caddy.pid" ]] && kill -0 "$(cat "$REPO_ROOT/.run/caddy.pid")" 2>/dev/null; then
       ok "  caddy already running (pid $(cat "$REPO_ROOT/.run/caddy.pid"))."
-      [[ "$FORCE_RESTART" == "1" ]] && { caddy stop >/dev/null 2>&1 || true; sleep 1; }
+      if [[ "$FORCE_RESTART" == "1" ]]; then
+        kill "$(cat "$REPO_ROOT/.run/caddy.pid")" 2>/dev/null || true
+        caddy stop >/dev/null 2>&1 || true
+        sleep 1
+      fi
     fi
     nohup caddy run --config "$CADDYFILE_TMP" --adapter caddyfile > /tmp/vesper-caddy.log 2>&1 &
     echo $! > "$REPO_ROOT/.run/caddy.pid"
@@ -505,7 +500,7 @@ PY
 )"
 echo "  finance strategies → $N_STRATS"
 if curl -s -o /dev/null -m 3 "http://127.0.0.1:80/" 2>/dev/null; then
-  ok "  web app up on :80 (localhost only — see Tailscale setup below for phone access)"
+  ok "  web app up behind Caddy on :80/:443 (Basic Auth enabled)"
 else
   warn "  web app not yet answering on :80 — check /tmp/vesper-caddy.log."
 fi
@@ -513,7 +508,11 @@ fi
 printf "\n"
 printf "${GREEN}Setup complete.${NC}\n"
 printf "  API health:   http://localhost:8000/health\n"
-printf "  Web app:      http://localhost:80/   (localhost-only — secure default)\n"
+if [[ -n "${VESPER_DOMAIN:-}" ]]; then
+  printf "  Web app:      https://${VESPER_DOMAIN}/   (Caddy HTTPS + Basic Auth)\n"
+else
+  printf "  Web app:      http://localhost:80/   (localhost-only + Basic Auth)\n"
+fi
 printf "  Brain garden: http://localhost:8081/\n"
 printf "  Telegram:     message your bot to talk to Hermes Agent.\n"
 printf "  Logs:         /tmp/vesper-api.log · /tmp/vesper-worker.log · /tmp/vesper-caddy.log · /tmp/vesper-gateway.log\n"
@@ -522,8 +521,8 @@ printf "${YELLOW}Phone access (Tailscale):${NC}\n"
 printf "  1. Install Tailscale on the VM and your phone: https://tailscale.com/download\n"
 printf "  2. On the VM: tailscale up\n"
 printf "  3. Set VESPER_DOMAIN=<your-vm>.ts.net in .env, then re-run ./start.sh\n"
-printf "  4. Your phone opens http://<your-vm>.ts.net through the tailnet\n"
-printf "  All traffic stays inside your encrypted tailnet — no public facing ports.\n"
+printf "  4. Your phone opens https://<your-vm>.ts.net through the tailnet\n"
+printf "  Tailscale keeps the site private; Caddy still requires Basic Auth.\n"
 printf "\n"
 printf "${YELLOW}Recommended hardening (Ubuntu):${NC}\n"
 printf "  sudo ufw enable; sudo ufw allow ssh; sudo ufw allow in on tailscale0\n"

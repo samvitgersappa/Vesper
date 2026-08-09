@@ -31,8 +31,9 @@ Loaded from `hermes-config/cron/daily_journal_questions.yaml` (versioned config,
 same order every day). Do **not** re-read the YAML per question — load once at start.
 
 - Q1 uses the weekday variant (`...in office?`) Mon–Fri IST, the default otherwise.
-- Before Q5/Q6, read what's already logged today via `journal.log_expense` /
-  `journal.log_workout` totals so you ask "anything else?" instead of repeating.
+- Before Q5/Q6, read what's already logged today via
+  `journal.spending_summary` and the workout read tool so you ask "anything
+  else?" instead of repeating.
 
 ## Journal entry formatting (Obsidian / Quartz graph)
 

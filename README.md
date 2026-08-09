@@ -146,11 +146,11 @@ swing trader is the 6th strategy (`catalyst_swing`) and is funded on a **₹10L
 (1,000,000) paper account** — position sizing scales off account equity, so the
 funnel, cost gate and swing engine are exercised at meaningful notional sizes.
 
-## Module MCP servers (64 tools)
+## Module MCP servers (67 tools)
 
 | Server | Tools | Purpose |
 |---|---|---|
-| journal | 9 | `write_entry`, `get_entry`, `complete_day`, `log_workout`, `log_expense`, streak, resolve… |
+| journal | 12 | `write_entry`, `get_entry`, `complete_day`, expense logging, spending summaries, workout logging, streak, resolve… |
 | relationship | 18 | people CRUD, interactions, reminders, introductions, gift ideas, health, search, stats, draft_message |
 | knowledge | 7 | `capture` (routing), vault search, unified recall (vault + LanceDB + journal), notes edit/delete |
 | finance | 9 | portfolio, trades, signals, nav + catalyst_scores, catalyst_candidates, catalyst_positions, catalyst_usage, catalyst_cost_gate (read-only) |
@@ -190,23 +190,26 @@ macOS). It does literally everything:
    replies to you); generates `POSTGRES_PASSWORD` + `JWT_SECRET`.
 5. **Second-brain vault** — creates `~/Documents/KnowledgeVault` fresh
    (`00 Journal/YYYY`, `03 Knowledge`, `99 Assets/images`, `01 Inbox`,
-   `02 Projects`, `index.md`) and git-inits it.
+    `02 Projects`) and git-inits it. No synthetic notes are created.
 6. **Data layer** — starts postgres + redis (Docker); on first run wipes the DB
-   to empty, then runs `alembic upgrade head` (56 tables across 7 schemas, all
-   empty), initialises the DuckDB feature store, and seeds the **6 paper-trader
-   accounts**.
+   to empty, then runs `alembic upgrade head` (56 tables across 7 schemas,
+   personal tables empty), initialises empty DuckDB/LanceDB stores, and creates
+   only the **6 paper-trader accounts**, each funded with ₹10L. No people,
+   journal entries, expenses, notes, graph rows, holdings, or trades are seeded.
 7. **Hermes provisioning** — writes `~/.hermes/.env`, merges `~/.hermes/config.yaml`
    (provider + fallbacks, approvals, skills/cron external dirs), syncs the 8
    module MCP servers, installs the capture-router plugin, and registers the 6
    reasoning cron jobs (Morning Brief 07:30, Daily Journal Questionnaire 21:30,
    Evening/Weekly/Monthly Review, Knowledge Architect 02:30).
-8. **Backend** — starts the API (:8000) and the data worker (all market jobs).
-9. **Web** — starts the Quartz garden and Caddy on :80 (static frontend + `/api`
-   proxy + `/brain`) — reachable from your phone at `http://<server-ip>/`.
+ 8. **Backend** — starts the localhost-only API (:8000) and data worker.
+ 9. **Web** — starts the Quartz garden and authenticated Caddy proxy. Set
+    `VESPER_DOMAIN` to a hostname for automatic HTTPS; Caddy is the only public
+    entry point.
 10. **Gateway** — starts the Hermes Telegram gateway.
 
-Idempotent: re-running skips what's already done. `--fresh` wipes the DB to a
-brand-new empty state and re-migrates.
+Idempotent: re-running preserves existing data. `--fresh` wipes all Vesper
+Postgres schemas, DuckDB/LanceDB data, and the vault home note, then re-migrates.
+It recreates only the six ₹10L paper accounts required by the finance roster.
 
 ### Security — Tailscale (recommended)
 
@@ -266,9 +269,10 @@ stdin-stdout — it never imports anything from this repo.
 | `TELEGRAM_BOT_TOKEN` | Bot token for notifications | (empty) |
 | `TELEGRAM_ALLOWED_USERS` | Your numeric Telegram ID (recipient) | (empty) |
 | `TELEGRAM_HOME_CHANNEL` | Optional group/channel chat ID; falls back to `TELEGRAM_ALLOWED_USERS` | (empty) |
+| `VESPER_BASIC_AUTH_USER` / `_PASSWORD` | Public dashboard/API Basic Auth credentials | generated |
 | `POSTGRES_USER` / `_PASSWORD` / `_DB` | Postgres credentials | `vesper` / generated / `vesper` |
-| `DATABASE_URL` | asyncpg URL (in-network `postgres` host for Docker) | `postgresql+asyncpg://…@postgres:5432/vesper` |
-| `REDIS_URL` | Redis URL (in-network for Docker; host MCP servers use bus.py's `localhost` default) | `redis://redis:6379/0` |
+| `DATABASE_URL` | Docker-internal URL; host MCP servers receive a generated localhost URL automatically | `postgresql+asyncpg://…@postgres:5432/vesper` |
+| `REDIS_URL` | Docker-internal URL; host MCP servers receive `redis://localhost:6379/0` automatically | `redis://redis:6379/0` |
 | `JWT_SECRET` | Dashboard JWT signing key | generated |
 | `HERMES_VAULT_PATH` | Obsidian vault root | `~/Documents/KnowledgeVault` |
 | `HERMES_STATE_DB` | Hermes Agent SQLite state | `~/.hermes/state.db` |

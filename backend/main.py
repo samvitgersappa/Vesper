@@ -62,7 +62,8 @@ def main() -> None:
     if APP_MODE == "worker":
         _run_worker()
         return
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
+    # Caddy is the public entry point; keep the API off the network interface.
+    uvicorn.run(app, host=os.environ.get("API_HOST", "127.0.0.1"), port=int(os.environ.get("PORT", "8000")))
 
 
 if __name__ == "__main__":

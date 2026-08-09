@@ -19,11 +19,10 @@ from backend.modules.finance.logic import STRATEGIES
 
 logger = logging.getLogger("vesper.finance.bootstrap")
 
-# The 5 classic EOD traders are paper-funded at ₹5L each (multi_trader 500k).
-CLASSIC_CAPITAL = 500_000.0
+# Every paper trader starts with ₹10L (1,000,000) of isolated paper capital.
+CLASSIC_CAPITAL = 1_000_000.0
 
-# Capital per trader_id: catalyst_swing is funded at ₹10L (work order);
-# every other roster trader falls back to the classic ₹5L.
+# Capital per trader_id: every roster trader is funded at ₹10L.
 _CAPITAL = {s["trader_id"]: CLASSIC_CAPITAL for s in STRATEGIES}
 _CAPITAL.update({"catalyst_swing": CATALYST_CAPITAL})
 

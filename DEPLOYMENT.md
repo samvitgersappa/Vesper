@@ -164,19 +164,21 @@ path). It will:
    It then generates `POSTGRES_PASSWORD` / `JWT_SECRET`.
 5. Create the second-brain vault folder structure fresh
    (`~/Documents/KnowledgeVault`: `00 Journal/YYYY`, `03 Knowledge`,
-   `99 Assets/images`, `01 Inbox`, `02 Projects`, `index.md`) and git-init it.
+   `99 Assets/images`, `01 Inbox`, `02 Projects`) and git-init it. No synthetic
+   home note is created.
 6. Start `postgres` + `redis` (Docker); on first run wipe the DB to empty,
    then `alembic upgrade head` → creates **56 tables across 7 schemas**, all
    empty.
-7. Initialise the DuckDB feature store (5 tables, empty) and seed the **6
-   paper-trader accounts** (5 classic @ ₹5L + catalyst_swing @ ₹10L).
+7. Initialise empty DuckDB/LanceDB feature stores and create the **6
+   paper-trader accounts**, each with ₹10L. No personal records, graph rows,
+   holdings, or trades are seeded.
 8. Provision Hermes Agent: write `~/.hermes/.env`, merge `~/.hermes/config.yaml`
    (provider + approvals + skills/cron external dirs), sync the 8 Vesper MCP
    servers, install the capture-router plugin, register the 6 reasoning cron
    jobs.
-9. Start the API (:8000) + worker as host processes.
-10. Start the Quartz garden (Docker) + Caddy on :80 (static frontend + `/api`
-    proxy + `/brain`) — open to the internet so your phone can reach it.
+9. Start the API (localhost-only :8000) + worker as host processes.
+10. Start the Quartz garden (Docker) + authenticated Caddy proxy. Set
+    `VESPER_DOMAIN` to a real hostname for automatic HTTPS.
 11. Start the Hermes Telegram gateway.
 12. Print stack status and handoff URLs.
 
@@ -228,7 +230,10 @@ python3 -m venv .venv
 # → "synced 8 Vesper MCP servers into ~/.hermes/config.yaml"
 ```
 
-The script is idempotent and preserves any MCP servers you already had.
+The script is idempotent and preserves any MCP servers you already had. Each
+Vesper MCP server receives the generated host-local `DATABASE_URL` and
+`REDIS_URL`; do not replace these with the Docker-internal `postgres`/`redis`
+hostnames when running MCP servers directly on the host.
 
 ### 5.2 Skills + cron
 
@@ -567,13 +572,17 @@ fi
    auth by default, so do not expose it.
 3. **`.env` is git-ignored** — never commit it. Rotate the key/token if it
    leaks.
-4. Caddy serves :80 (and can do TLS on :443 with a domain via `VESPER_DOMAIN`).
-   Put it (or nginx) in front of the API + dashboard and terminate TLS if
-   serving over the public internet.
+4. Caddy is the only public entry point and protects the dashboard/API with
+   Basic Auth. Set `VESPER_DOMAIN` to a real hostname so Caddy obtains HTTPS
+   automatically. The API binds only to `127.0.0.1:8000`.
 5. Telegram bot token lives in `.env`; `install_hermes.py`/`start.sh` never print it.
 6. The vault backup uses a **fine-grained PAT scoped to that one repo**.
 7. Ollama (if used) binds 127.0.0.1:11434 — do not expose.
 8. Keep Docker, Node, Python, and Hermes Agent updated.
+9. Hermes normal Telegram chats are not end-to-end encrypted. Conversation
+   state is stored in `~/.hermes/state.db`; logs are under `~/.hermes/logs` and
+   `/tmp/vesper-gateway.log`. Prompts are also sent to the configured model
+   provider.
 
 ---
 
@@ -617,7 +626,8 @@ cd /opt/vesper/vesper
 ### 12.5 Change the schedule
 
 Edit `JOB_SCHEDULE` in `backend/automation/scheduler.py` and restart the worker.
-Times are in the server's local timezone (IST on the reference deployment).
+Times are explicitly scheduled in `Asia/Kolkata` (IST), independent of the
+server's local timezone.
 
 ---
 

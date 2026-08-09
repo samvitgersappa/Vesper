@@ -25,6 +25,9 @@ from backend.modules.journal.logic import (
     log_workout as _log_workout,
     read_entry as _read_entry,
     resolve as _resolve,
+    spending_analysis as _spending_analysis,
+    spending_summary as _spending_summary,
+    spending_transactions as _spending_transactions,
     update_entry as _update_entry,
     write_entry as _write_entry,
 )
@@ -85,6 +88,24 @@ async def log_workout(activity: str = "workout", muscle_groups: list = None, dat
 async def delete_expense(spending_id: str) -> dict:
     """Remove a specific spending row by id (self-correction for accidental logs)."""
     return await _delete_expense(spending_id)
+
+
+@mcp.tool()
+async def spending_transactions(limit: int = 50) -> dict:
+    """List recent expenses, newest first, with date, category, amount, and id."""
+    return await _spending_transactions(limit)
+
+
+@mcp.tool()
+async def spending_summary(period: str = "week") -> dict:
+    """Summarize expenses by day for week, month, or year."""
+    return await _spending_summary(period)
+
+
+@mcp.tool()
+async def spending_analysis() -> dict:
+    """Return category totals, trends, and spending habits from logged expenses."""
+    return await _spending_analysis()
 
 
 @mcp.tool()

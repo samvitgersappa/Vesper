@@ -14,6 +14,7 @@ safe because Hermes reads plain YAML config.yaml; we only ever load+dump it.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -23,6 +24,31 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 TEMPLATE = REPO / "hermes-config" / "mcp_servers.json"
 VENV_PYTHON = REPO / ".venv" / "bin" / "python"
+
+
+def host_runtime_env() -> dict[str, str]:
+    """Build the host-side runtime environment shared by all MCP servers."""
+    values: dict[str, str] = {}
+    env_file = REPO / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip()
+
+    user = values.get("POSTGRES_USER", "vesper")
+    password = values.get("POSTGRES_PASSWORD", "change-me")
+    database = values.get("POSTGRES_DB", "vesper")
+    vault = values.get("HERMES_VAULT_PATH_ABS") or values.get("HERMES_VAULT_PATH", "")
+    runtime = {
+        "DATABASE_URL": f"postgresql+asyncpg://{user}:{password}@localhost:5432/{database}",
+        "REDIS_URL": "redis://localhost:6379/0",
+    }
+    if vault:
+        runtime["HERMES_VAULT_PATH"] = os.path.expanduser(vault)
+        runtime["HERMES_VAULT_PATH_ABS"] = os.path.expanduser(vault)
+    return runtime
 
 
 def resolve(template: dict) -> dict:
@@ -46,6 +72,9 @@ def main(config_path: str) -> int:
     raw = TEMPLATE.read_text(encoding="utf-8")
     template = json.loads(raw)["mcpServers"]
     resolved = resolve(template)
+    runtime_env = host_runtime_env()
+    for server in resolved.values():
+        server.setdefault("env", {}).update(runtime_env)
 
     cfg_path = Path(config_path).expanduser()
     if not cfg_path.exists():
