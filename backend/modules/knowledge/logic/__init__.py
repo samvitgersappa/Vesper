@@ -24,11 +24,13 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
-from backend.db.postgres.schemas.hermes.models import CaptureRoutingLog
+from backend.db.postgres.schemas.finance.models import AuditLogEntry, DatasetRegistryEntry, NotebookEntry, ResearchExperiment
+from backend.db.postgres.schemas.hermes.models import CaptureRoutingLog, HermesLLMUsage, HermesToolCall
 from backend.db.postgres.schemas.journal.models import DiaryEntry, Spending, Workout
-from backend.db.postgres.schemas.relationship.models import Reminder
+from backend.db.postgres.schemas.relationship.models import Interaction, LifeEvent, Note, Person, Reminder
+from backend.db.postgres.schemas.study.models import MockTest, Test
 from backend.events.catalog import KNOWLEDGE_INDEXED
 from backend.modules.common import publish
 from backend.modules.db import session_factory
@@ -829,85 +831,113 @@ async def knowledge_capture(
 
 
 async def knowledge_recall_everything(query: str) -> dict[str, Any]:
-    """Fan-out recall: vault search + capture_routing_log + journal entries."""
-    query = query or ""
-    results: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    """Search configured stores and return stable, deterministically merged records."""
+    query = (query or "").strip()
+    needle = f"%{query}%"
+    candidates: list[dict[str, Any]] = []
+    source_status: list[dict[str, str]] = []
+
+    def add(source: str, ref_id: str, content: str, **fields: Any) -> None:
+        if content and (not query or query.casefold() in content.casefold()):
+            candidates.append({"source": source, "ref_id": str(ref_id), "content": content, **fields})
 
     try:
-        vault = await knowledge_search(query, top_k=5)
-        for r in vault.get("results", []):
-            key = r.get("file_path", "")
-            if key in seen:
-                continue
-            seen.add(key)
-            results.append({
-                "source": "vault",
-                "content": r.get("content_preview", ""),
-                "file_path": key,
-                "title": r.get("title"),
-            })
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("vault recall failed: %s", exc)
-
-    # LanceDB semantic fan-out (addendum §3; degraded to empty without the index).
-    try:
-        from backend.db.lancedb_client import search as _lancedb_search
-
-        for r in _lancedb_search(query, top_k=5, vault_root=str(vault_root())):
-            key = r.get("file_path", "")
-            if key in seen:
-                continue
-            seen.add(key)
-            results.append({
-                "source": "lancedb",
-                "content": r.get("title", ""),
-                "file_path": key,
-                "title": r.get("title"),
-                "score": r.get("score"),
-            })
-    except Exception as exc:  # pragma: no cover
-        logger.debug("lancedb recall failed: %s", exc)
+        root = vault_root()
+        if not root.exists():
+            raise FileNotFoundError(str(root))
+        for row in (await knowledge_search(query, top_k=20)).get("results", []):
+            path = row.get("file_path", "")
+            add("obsidian", f"vault:{path}", row.get("content_preview", ""), title=row.get("title"), file_path=path)
+        source_status.append({"source": "obsidian", "status": "ok"})
+    except Exception as exc:
+        source_status.append({"source": "obsidian", "status": f"unavailable: {exc}"})
 
     try:
-        async with session_factory()() as db:
-            res = await db.execute(
-                select(CaptureRoutingLog)
-                .where(CaptureRoutingLog.utterance.ilike(f"%{query}%"))
-                .order_by(CaptureRoutingLog.ts.desc())
-                .limit(10)
-            )
-            for row in res.scalars().all():
-                results.append({
-                    "source": "capture_log",
-                    "content": row.utterance or "",
-                    "stored_in": row.stored_in,
-                    "ts": row.ts.isoformat() if row.ts else None,
-                })
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("capture log recall failed: %s", exc)
+        from backend.db import lancedb_client
+        if lancedb_client.lancedb is None or lancedb_client.pa is None:
+            raise RuntimeError("lancedb dependencies are not installed")
+        _lancedb_search = lancedb_client.search
+        for row in _lancedb_search(query, top_k=20, vault_root=str(vault_root())):
+            path = row.get("file_path", "")
+            add("lancedb", f"lancedb:{path}", row.get("title", ""), title=row.get("title"), file_path=path, score=row.get("score"))
+        source_status.append({"source": "lancedb", "status": "ok"})
+    except Exception as exc:
+        source_status.append({"source": "lancedb", "status": f"unavailable: {exc}"})
 
+    models = [
+        ("journal", DiaryEntry, [DiaryEntry.title, DiaryEntry.mood, DiaryEntry.vault_path]),
+        ("journal", Spending, [Spending.category, Spending.raw_text]),
+        ("journal", Workout, [Workout.activity, Workout.raw_text]),
+        ("crm", Person, [Person.name, Person.bio, Person.company, Person.profile_notes]),
+        ("crm", Interaction, [Interaction.summary, Interaction.follow_up_note]),
+        ("crm", Note, [Note.content]),
+        ("calendar", Person, [Person.name]),
+        ("calendar", Interaction, [Interaction.summary, Interaction.follow_up_note]),
+        ("calendar", LifeEvent, [LifeEvent.title, LifeEvent.description]),
+        ("calendar", Reminder, [Reminder.title, Reminder.body]),
+        ("study", Test, [Test.name]),
+        ("study", MockTest, [MockTest.subject_scores]),
+        ("finance", ResearchExperiment, [ResearchExperiment.name, ResearchExperiment.decision_rationale]),
+        ("finance", DatasetRegistryEntry, [DatasetRegistryEntry.notes, DatasetRegistryEntry.source]),
+        ("finance", NotebookEntry, [NotebookEntry.question, NotebookEntry.hypothesis, NotebookEntry.lessons]),
+        ("audit", AuditLogEntry, [AuditLogEntry.module, AuditLogEntry.action, AuditLogEntry.reason]),
+        ("audit", CaptureRoutingLog, [CaptureRoutingLog.utterance, CaptureRoutingLog.stored_in]),
+        ("hermes-postgres", HermesToolCall, [HermesToolCall.tool_name, HermesToolCall.server_name]),
+        ("hermes-postgres", HermesLLMUsage, [HermesLLMUsage.model, HermesLLMUsage.provider]),
+    ]
     try:
         async with session_factory()() as db:
-            res = await db.execute(
-                select(DiaryEntry)
-                .where(DiaryEntry.title.ilike(f"%{query}%"))
-                .order_by(DiaryEntry.entry_date.desc())
-                .limit(10)
-            )
-            for e in res.scalars().all():
-                content = " ".join(
-                    str(x) for x in [e.title, e.mood, f"tags={e.tags or []}"] if x
-                ).strip()
-                results.append({
-                    "source": "journal",
-                    "content": content,
-                    "entry_date": e.entry_date.isoformat() if e.entry_date else None,
-                })
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("journal recall failed: %s", exc)
+            db_warnings: list[str] = []
+            for source, model, columns in models:
+                try:
+                    text_columns = [column for column in columns if column.type.python_type is str]
+                    if not text_columns:
+                        continue
+                    rows = (await db.execute(select(model).where(or_(*[column.ilike(needle) for column in text_columns])).limit(20))).scalars().all()
+                    for row in rows:
+                        data = {column.name: getattr(row, column.name, None) for column in model.__table__.columns}
+                        content = " ".join(str(value) for value in data.values() if value is not None)
+                        key = ":".join(str(getattr(row, column.name)) for column in model.__table__.primary_key.columns)
+                        add(source, f"postgres:{model.__table__.schema}.{model.__tablename__}:{key}", content, record=data)
+                except Exception as exc:
+                    logger.debug("recall source %s failed: %s", source, exc)
+                    await db.rollback()
+                    db_warnings.append(f"{model.__table__.schema}.{model.__tablename__}: {exc}")
+        source_status.append({"source": "postgres", "status": "ok" if not db_warnings else "degraded", "warning": "; ".join(db_warnings[:5])})
+    except Exception as exc:
+        source_status.append({"source": "postgres", "status": f"unavailable: {exc}"})
 
-    return {"query": query, "results": results}
+    memory_db = os.environ.get("TENCENTDB_AGENT_MEMORY_DB", "").strip()
+    if memory_db:
+        try:
+            import sqlite3
+            with sqlite3.connect(memory_db) as conn:
+                tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                table = next((name for name in ("memory", "memories", "atoms", "messages") if name in tables), None)
+                if table is None:
+                    raise RuntimeError("no supported memory table")
+                columns = [row[1] for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]
+                text_column = next((name for name in ("content", "text", "value", "memory") if name in columns), None)
+                if text_column is None:
+                    raise RuntimeError("memory table has no text column")
+                rows = conn.execute(f'SELECT rowid, * FROM "{table}" WHERE "{text_column}" LIKE ? LIMIT 20', (needle,)).fetchall()
+            for row in rows:
+                add("hermes-tencentdb", f"sqlite:{memory_db}:{row[0]}", " ".join(map(str, row[1:])))
+            source_status.append({"source": "hermes-tencentdb", "status": "ok"})
+        except Exception as exc:
+            source_status.append({"source": "hermes-tencentdb", "status": f"unavailable: {exc}"})
+    else:
+        source_status.append({"source": "hermes-tencentdb", "status": "not configured"})
+
+    merged: dict[str, dict[str, Any]] = {}
+    for item in sorted(candidates, key=lambda row: (row["content"].casefold(), row["source"], row["ref_id"])):
+        key = re.sub(r"\s+", " ", item["content"].strip()).casefold()
+        if key in merged:
+            merged[key].setdefault("sources", []).append({"source": item["source"], "ref_id": item["ref_id"]})
+        else:
+            item["sources"] = [{"source": item["source"], "ref_id": item["ref_id"]}]
+            merged[key] = item
+    return {"query": query, "results": sorted(merged.values(), key=lambda row: (row["source"], row["ref_id"]))[:100], "source_status": source_status}
 
 
 async def knowledge_update_note(path: str, new_content: str) -> dict[str, Any]:

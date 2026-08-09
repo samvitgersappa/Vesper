@@ -40,6 +40,7 @@ from backend.modules.ipo.logic import list_recent as ipo_list_recent
 from backend.modules.ipo.logic import list_upcoming as ipo_list_upcoming
 from backend.modules.journal.logic import get_entry as journal_get_entry
 from backend.modules.journal.logic import get_mood_streak as journal_get_mood_streak
+from backend.modules.journal.logic import get_streak_calendar as journal_get_streak_calendar
 from backend.modules.journal.logic import log_expense as journal_log_expense
 from backend.modules.journal.logic import log_workout as journal_log_workout
 from backend.modules.journal.logic import read_entry as journal_read_entry
@@ -108,6 +109,11 @@ async def api_journal_entry(date: str = ""):
 @router.get("/journal/streak")
 async def api_journal_streak():
     return await journal_get_mood_streak()
+
+
+@router.get("/journal/calendar")
+async def api_journal_calendar(days: int = 84):
+    return await journal_get_streak_calendar(days)
 
 
 # ── Spending ───────────────────────────────────────────────────────────────

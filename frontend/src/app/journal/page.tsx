@@ -1,98 +1,81 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "../../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { api, fmtDate } from "../../lib/api";
 import PageHeader from "../../components/PageHeader";
+
+type JournalDay = {
+  date: string;
+  has_entry: boolean;
+  mood?: string | null;
+  complete: boolean;
+  word_count: number;
+};
 
 export default function Journal() {
   const [date, setDate] = useState("");
   const [entry, setEntry] = useState<any>(null);
   const [streak, setStreak] = useState<any>(null);
+  const [days, setDays] = useState<JournalDay[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    (async () => {
-      try {
-        const [e, s] = await Promise.all([
-          api("/journal/entry", { date }),
-          api("/journal/streak"),
-        ]);
-        setEntry(e);
-        setStreak(s);
-      } catch (err: any) {
-        setError(err.message);
-      }
-    })();
+    let active = true;
+    setError("");
+    Promise.all([api(`/journal/entry`, { date }), api(`/journal/streak`), api(`/journal/calendar`)]).then(
+      ([entryResult, streakResult, calendarResult]: any[]) => {
+        if (!active) return;
+        setEntry(entryResult);
+        setStreak(streakResult);
+        setDays(calendarResult.days ?? []);
+      },
+    ).catch((err: Error) => active && setError(err.message));
+    return () => { active = false; };
   }, [date]);
+
+  const activeDays = useMemo(() => days.filter((day) => day.has_entry).length, [days]);
+  const weeks = useMemo(() => {
+    const padded = [...days];
+    while (padded.length && new Date(`${padded[0].date}T00:00:00`).getDay() !== 0) padded.unshift({ date: "", has_entry: false, complete: false, word_count: 0 });
+    return Array.from({ length: Math.ceil(padded.length / 7) }, (_, i) => padded.slice(i * 7, i * 7 + 7));
+  }, [days]);
 
   return (
     <>
-      <PageHeader
-        title="Journal"
-        subtitle="A running diary of how your days actually go — write, reflect, and keep the streak alive."
-        accent="var(--journal)"
-        accentB="#f0a84b"
-      />
+      <PageHeader title="Journal" subtitle="A calm place to notice the shape of your days, one honest entry at a time." accent="var(--journal)" accentB="#f0a84b" />
       {error && <div className="error">{error}</div>}
-      <div className="grid">
-        <div className="card">
-          <h2>Streak</h2>
-          <div className="big grad" style={{ "--big-a": "#f6c445", "--big-b": "#f0a84b" } as React.CSSProperties}>
-            {streak?.current_streak ?? streak?.streak ?? "—"} days
+
+      <section className="journal-hero">
+        <div>
+          <span className="eyebrow">Daily practice</span>
+          <h1>Keep the thread.</h1>
+          <p>Small entries compound into a record you can actually return to.</p>
+        </div>
+        <div className="journal-hero-stats">
+          <div><strong>{streak?.current_streak ?? streak?.streak ?? 0}</strong><span>day streak</span></div>
+          <div><strong>{activeDays}</strong><span>active days</span></div>
+        </div>
+      </section>
+
+      <div className="journal-layout">
+        <div className="card journal-calendar-card">
+          <div className="journal-card-head"><div><span className="eyebrow">Last 12 weeks</span><h2>Consistency calendar</h2></div><span className="muted">{activeDays} of {days.length} days</span></div>
+          <div className="weekday-row">{["S", "M", "T", "W", "T", "F", "S"].map((day, i) => <span key={`${day}-${i}`}>{day}</span>)}</div>
+          <div className="streak-calendar" aria-label="Journal activity calendar">
+            {weeks.flat().map((day, index) => day.date ? (
+              <button key={day.date} className={`streak-day ${day.has_entry ? "has-entry" : ""} ${day.complete ? "complete" : ""} ${day.date === date ? "selected" : ""}`} title={`${day.date}${day.mood ? ` · ${day.mood}` : ""}`} onClick={() => setDate(day.date)}>{day.mood || ""}</button>
+            ) : <span className="streak-day empty" key={`empty-${index}`} />)}
           </div>
+          <div className="calendar-legend"><span><i className="legend-dot" />entry</span><span><i className="legend-dot complete" />complete</span><span className="muted">Click a day to open it</span></div>
         </div>
-        <div className="card">
-          <h2>Entry</h2>
-          <label className="muted">
-            Date{" "}
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              style={{ marginLeft: 8 }}
-            />
-          </label>
-          {entry ? (
-            <p style={{ whiteSpace: "pre-wrap" }}>
-              {String(entry.content ?? entry.text ?? "").slice(0, 2000)}
-            </p>
-          ) : (
-            <div className="muted">No entry for this date.</div>
-          )}
-        </div>
-        <div className="card" style={{ gridColumn: "1 / -1" }}>
-          <h2>
-            <span className="card-ico" style={{ background: "color-mix(in srgb, var(--graph) 22%, transparent)" }}>
-              🧠
-            </span>
-            Second Brain
-          </h2>
-          <p className="muted">
-            Every journal entry, capture and knowledge note lives as a file in
-            your Obsidian vault. The private Quartz garden turns that vault into
-            a browsable site — full-text search, wikilinks, backlinks and an
-            interactive graph — served only on your tailnet.
-          </p>
-          <a
-            className="btn"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              marginTop: 8,
-              padding: "10px 18px",
-              borderRadius: 12,
-              color: "#fff",
-              fontWeight: 650,
-              textDecoration: "none",
-              background: "linear-gradient(120deg, #b980f7, #5b8cff)",
-            }}
-            href="/brain/"
-          >
-            Open the Garden →
-          </a>
+
+        <div className="card journal-entry-card">
+          <div className="journal-card-head"><div><span className="eyebrow">Read back</span><h2>{date ? fmtDate(date) : "Today"}</h2></div><input aria-label="Choose journal date" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></div>
+          {entry?.found ? <article className="journal-entry-content">{String(entry.content ?? entry.text ?? "").slice(0, 5000)}</article> : <div className="empty-state"><span className="empty-mark">✦</span><strong>No entry here yet</strong><p>Write a few lines in Hermes or the journal tool and this day will appear in your calendar.</p></div>}
         </div>
       </div>
+
+      <div className="card garden-card"><div><span className="eyebrow">Second brain</span><h2>Your garden is growing</h2><p className="muted">Journal entries, captures, and knowledge notes stay browsable in the private Obsidian garden.</p></div><a className="btn" href="/brain/">Open the Garden <span>↗</span></a></div>
     </>
   );
 }

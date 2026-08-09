@@ -1130,6 +1130,52 @@ a.link:hover {
   overflow: visible;
 }
 
+/* ── Journal ─────────────────────────────────────────────────────────── */
+.journal-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-end;
+  padding: 28px 30px;
+  margin-bottom: 18px;
+  border: 1px solid color-mix(in srgb, var(--journal) 35%, var(--border));
+  border-radius: 22px;
+  background: radial-gradient(500px 220px at 90% 0%, color-mix(in srgb, var(--journal) 17%, transparent), transparent 70%), var(--panel);
+}
+.journal-hero h1 { margin: 5px 0 4px; font-size: clamp(28px, 4vw, 44px); letter-spacing: -0.04em; }
+.journal-hero p { margin: 0; color: var(--muted); }
+.eyebrow { color: var(--journal); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.journal-hero-stats { display: flex; gap: 28px; flex: none; }
+.journal-hero-stats div { display: flex; flex-direction: column; gap: 2px; }
+.journal-hero-stats strong { font-size: 31px; line-height: 1; color: var(--journal); }
+.journal-hero-stats span { color: var(--muted); font-size: 12px; }
+.journal-layout { display: grid; grid-template-columns: minmax(300px, .9fr) minmax(340px, 1.1fr); gap: 16px; margin-bottom: 16px; }
+.journal-card-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 22px; }
+.journal-card-head h2 { margin: 4px 0 0; font-size: 20px; letter-spacing: -.025em; }
+.journal-card-head input { width: auto; max-width: 155px; padding: 8px 10px; }
+.weekday-row, .streak-calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px; }
+.weekday-row { margin-bottom: 7px; }
+.weekday-row span { color: var(--muted); font-size: 11px; text-align: center; }
+.streak-day { aspect-ratio: 1; min-height: 26px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); color: var(--text); font-size: 12px; cursor: pointer; transition: transform .15s var(--ease), border-color .15s var(--ease); }
+button.streak-day:hover { transform: translateY(-2px); border-color: var(--journal); }
+.streak-day.has-entry { background: color-mix(in srgb, var(--journal) 34%, var(--panel-2)); border-color: color-mix(in srgb, var(--journal) 55%, var(--border)); }
+.streak-day.complete { background: color-mix(in srgb, var(--good) 45%, var(--panel-2)); border-color: color-mix(in srgb, var(--good) 65%, var(--border)); }
+.streak-day.selected { outline: 2px solid var(--journal); outline-offset: 2px; }
+.streak-day.empty { visibility: hidden; }
+.calendar-legend { display: flex; align-items: center; gap: 13px; margin-top: 18px; font-size: 11px; }
+.calendar-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend-dot { width: 9px; height: 9px; border-radius: 3px; background: color-mix(in srgb, var(--journal) 45%, var(--panel-2)); }
+.legend-dot.complete { background: color-mix(in srgb, var(--good) 55%, var(--panel-2)); }
+.journal-entry-content { max-height: 445px; overflow: auto; white-space: pre-wrap; line-height: 1.75; color: var(--text); font-size: 14px; padding-right: 8px; }
+.empty-state { display: grid; place-items: center; text-align: center; min-height: 300px; padding: 20px; color: var(--muted); }
+.empty-state strong { color: var(--text); margin-top: 8px; }
+.empty-state p { max-width: 270px; font-size: 13px; }
+.empty-mark { color: var(--journal); font-size: 28px; }
+.garden-card { display: flex; justify-content: space-between; align-items: center; gap: 20px; background: linear-gradient(120deg, color-mix(in srgb, var(--graph) 12%, var(--panel)), var(--panel)); }
+.garden-card h2 { margin: 5px 0 4px; font-size: 18px; }
+.garden-card p { margin: 0; }
+.garden-card .btn { flex: none; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--graph) 45%, var(--border)); border-radius: 10px; }
+
 /* ── Responsive ──────────────────────────────────────────────────────── */
 @media (max-width: 720px) {
   .nav {
@@ -1149,4 +1195,7 @@ a.link:hover {
   .big {
     font-size: 28px;
   }
+  .journal-hero, .garden-card { align-items: flex-start; flex-direction: column; }
+  .journal-layout { grid-template-columns: 1fr; }
+  .journal-hero-stats { width: 100%; }
 }

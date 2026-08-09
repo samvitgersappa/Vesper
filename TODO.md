@@ -12,7 +12,7 @@ tests. Do not create another `TODO` or feature-tracker file; add new work here.
 
 ## P0: Memory and Recall
 
-### [ ] Unified recall across every memory store
+### [x] Unified recall across every memory store
 
 Build one `knowledge.recall_everything(query)` path that searches and merges:
 
@@ -27,6 +27,12 @@ Acceptance criteria:
 - Duplicate results are merged deterministically.
 - A test proves recall survives an API, worker, and Hermes restart.
 - Missing optional stores degrade with an explicit source-status warning.
+
+Implemented by `knowledge.recall_everything` and exposed through both the
+Knowledge MCP server and `GET /api/knowledge/recall`. Results include a stable
+`ref_id`, `source`, and merged `sources` list. TencentDB Agent Memory remains
+opt-in through `TENCENTDB_AGENT_MEMORY_DB`; absent optional stores return an
+explicit `source_status` entry and do not affect scheduled jobs.
 
 ### [ ] User-facing memory browser
 

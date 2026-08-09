@@ -557,6 +557,45 @@ async def get_mood_streak() -> dict[str, Any]:
     }
 
 
+async def get_streak_calendar(days: int = 84) -> dict[str, Any]:
+    """Return a compact day-by-day journal heatmap for the frontend."""
+    days = max(28, min(int(days), 366))
+    today = _today()
+    start = today - timedelta(days=days - 1)
+    entries: dict[date, dict[str, Any]] = {}
+    try:
+        async with session_factory()() as db:
+            rows = (await db.execute(
+                select(DiaryEntry).where(
+                    DiaryEntry.entry_date >= datetime(start.year, start.month, start.day),
+                    DiaryEntry.entry_date < datetime(today.year, today.month, today.day) + timedelta(days=1),
+                )
+            )).scalars().all()
+            for row in rows:
+                if row.entry_date:
+                    day = row.entry_date.date() if isinstance(row.entry_date, datetime) else row.entry_date
+                    entries[day] = {
+                        "mood": row.mood,
+                        "complete": bool(row.complete),
+                        "word_count": row.word_count or 0,
+                    }
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("streak calendar query failed: %s", exc)
+    calendar = []
+    for offset in range(days):
+        day = start + timedelta(days=offset)
+        meta = entries.get(day, {})
+        file_exists = read_entry_file(day).get("found", False)
+        calendar.append({
+            "date": day.isoformat(),
+            "has_entry": bool(meta or file_exists),
+            "mood": meta.get("mood"),
+            "complete": meta.get("complete", False),
+            "word_count": meta.get("word_count", 0),
+        })
+    return {"ok": True, "today": today.isoformat(), "days": calendar}
+
+
 async def complete_day(date_str: str = "", complete: bool = True) -> dict[str, Any]:
     """Mark today's (or `date_str`'s) journal complete (plan.md §12.1).
 

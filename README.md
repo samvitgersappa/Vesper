@@ -304,6 +304,7 @@ stdin-stdout — it never imports anything from this repo.
 | `JWT_SECRET` | Dashboard JWT signing key | generated |
 | `HERMES_VAULT_PATH` | Obsidian vault root | `~/Documents/KnowledgeVault` |
 | `HERMES_STATE_DB` | Hermes Agent SQLite state | `~/.hermes/state.db` |
+| `TENCENTDB_AGENT_MEMORY_DB` | Optional TencentDB Agent Memory SQLite path used by unified recall | unset |
 | `GH_PAT` / `VAULT_REPO_URL` | Vault backup to a private GitHub repo (addendum §7) | (empty — optional) |
 | `VAULT_GIT_REMOTE` | Full git remote URL (overrides `VAULT_REPO_URL` + `GH_PAT`) | (empty) |
 | `QUARTZ_DIR` / `QUARTZ_OUTPUT` | Optional Quartz digital-garden rebuild | (empty) |
