@@ -33,19 +33,22 @@ async def crm_followups_sweep() -> dict:
             now = _now()
             rows = (await db.execute(
                 select(Reminder)
-                .where(Reminder.remind_at <= now)
-                .where(Reminder.completed_at.is_(None))
-                .order_by(Reminder.remind_at.asc())
+                .where(Reminder.due_at <= now)
+                .where(Reminder.is_sent.is_(False))
+                .where(Reminder.is_dismissed.is_(False))
+                .order_by(Reminder.due_at.asc())
             )).scalars().all()
             for r in rows:
                 due.append({
                     "reminder_id": r.id,
                     "person_id": r.person_id,
-                    "message": r.message or "Follow up",
-                    "due": r.remind_at.isoformat() if r.remind_at else None,
+                    "message": r.body or r.title or "Follow up",
+                    "due": r.due_at.isoformat() if r.due_at else None,
                 })
             for d in due:
                 publish(REMINDER_DUE, d)
+            for r in rows:
+                r.is_sent = True
             await db.commit()
         logger.info("crm_followups_sweep: %d due reminder(s)", len(due))
         return {"ok": True, "due": due}

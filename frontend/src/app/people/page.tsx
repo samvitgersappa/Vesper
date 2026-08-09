@@ -74,12 +74,16 @@ export default function People() {
               <div className="big">{selected.name}</div>
               <p className="muted">
                 {selected.category} · last contact{" "}
-                {selected.last_contact_date ?? "—"}
+                {selected.last_contacted ?? "—"}
               </p>
-              <p>{selected.notes ?? selected.summary ?? ""}</p>
-              {selected.interactions?.length ? (
+              <p>
+                {selected.profile_notes ?? selected.summary ?? ""}
+                {Array.isArray(selected.notes) && selected.notes.length > 0 &&
+                  ` ${selected.notes.map((note: any) => note.content ?? note.text ?? "").join(" ")}`}
+              </p>
+              {selected.recent_interactions?.length ? (
                 <ul className="list">
-                  {selected.interactions.slice(-5).map((i: any) => (
+                  {selected.recent_interactions.slice(-5).map((i: any) => (
                     <li key={i.interaction_id ?? i.id}>
                       <span>{i.type ?? i.interaction_type}</span>
                       <span className="muted">{i.interaction_date ?? ""}</span>

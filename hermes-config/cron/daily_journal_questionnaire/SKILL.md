@@ -74,6 +74,12 @@ Never batch — every answer is written the moment it arrives:
   taxonomy (Food, Travel/Transport, Shopping, Bills/Utilities, Health,
   Entertainment, Other; best-effort, default "Other"); read the day's total back
   for confirmation.
+- Q8 → for each person the user wants remembered, call `relationship.create_person`
+  when no matching contact exists, then call `relationship.create_interaction` with
+  today's date and the connection context. Never claim a contact was saved without
+  a successful tool result.
+- Q9 → append the answer to the journal entry as the Tomorrow section; do not
+  leave it only in the chat transcript.
 
 ## Turn-taking (§2.8) — group, don't interrogate
 
@@ -91,6 +97,9 @@ synthesis — escalate to the plan §14 model tier rather than the cheap default
 
 On completion publish `DailyJournalCompleted` via `journal.complete_day`
 (marks `diary_entries.complete = true`). Evening Review subscribes to this event.
+Only announce completion after `complete_day` returns `ok: true`; if any mapped
+write fails, retry it and report the specific failure instead of saying the entry
+is held in chat.
 
 ## Retries (§2.5)
 
