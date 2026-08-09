@@ -21,6 +21,7 @@ warn when Postgres is unavailable (the vault file is the system of record).
 import logging
 import re
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -335,7 +336,10 @@ async def write_entry(
     })
     # Reactive garden rebuild: every vault write triggers a KnowledgeIndexed
     # event so the Quartz Second Brain picks up new journal entries immediately.
-    publish(KNOWLEDGE_INDEXED, {"path": file_abs(file_res["path"] or ""), "action": "journal_entry"})
+    # `write_entry_file` returns an absolute path; keep event publication
+    # defensive so a successful journal write is never reported as a failure.
+    indexed_path = str(Path(file_res["path"] or "").resolve()) if file_res.get("path") else ""
+    publish(KNOWLEDGE_INDEXED, {"path": indexed_path, "action": "journal_entry"})
     return {
         "ok": True,
         "entry_id": meta.get("entry_id"),

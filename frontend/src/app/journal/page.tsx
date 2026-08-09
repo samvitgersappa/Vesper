@@ -27,7 +27,7 @@ export default function Journal() {
         if (!active) return;
         setEntry(entryResult);
         setStreak(streakResult);
-        setDays(calendarResult.days ?? []);
+        setDays(Array.isArray(calendarResult?.days) ? calendarResult.days : []);
       },
     ).catch((err: Error) => active && setError(err.message));
     return () => { active = false; };
@@ -62,7 +62,7 @@ export default function Journal() {
           <div className="journal-card-head"><div><span className="eyebrow">Last 12 weeks</span><h2>Consistency calendar</h2></div><span className="muted">{activeDays} of {days.length} days</span></div>
           <div className="weekday-row">{["S", "M", "T", "W", "T", "F", "S"].map((day, i) => <span key={`${day}-${i}`}>{day}</span>)}</div>
           <div className="streak-calendar" aria-label="Journal activity calendar">
-            {weeks.flat().map((day, index) => day.date ? (
+            {weeks.reduce<JournalDay[]>((all, week) => all.concat(week), []).map((day, index) => day.date ? (
               <button key={day.date} className={`streak-day ${day.has_entry ? "has-entry" : ""} ${day.complete ? "complete" : ""} ${day.date === date ? "selected" : ""}`} title={`${day.date}${day.mood ? ` · ${day.mood}` : ""}`} onClick={() => setDate(day.date)}>{day.mood || ""}</button>
             ) : <span className="streak-day empty" key={`empty-${index}`} />)}
           </div>
