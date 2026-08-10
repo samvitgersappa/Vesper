@@ -17,7 +17,15 @@ from sqlalchemy import select, text
 
 from backend.modules.db import session_factory
 from backend.db.postgres.schemas.graph.models import GraphNode, GraphSnapshot
-from backend.modules.graph.logic import compute_analytics, detect_communities, _fetch_graph
+from backend.modules.graph.logic import (
+    _edge_dict,
+    _node_dict,
+    compute_analytics,
+    _fetch_graph,
+    node_betweenness_map,
+    node_community_map,
+    node_pagerank_map,
+)
 
 logger = logging.getLogger("vesper.automation.graph")
 
@@ -30,17 +38,16 @@ async def graph_analytics_pass() -> dict:
     """Recompute communities + centrality, persist node scores + a snapshot."""
     try:
         graph = await _fetch_graph()
-        nodes = graph.get("nodes", [])
-        edges = graph.get("edges", [])
+        nodes = [_node_dict(n) for n in graph[0]]
+        edges = [_edge_dict(e) for e in graph[1]]
         if not nodes:
             logger.info("graph_analytics: no nodes — no-op")
             return {"ok": True, "nodes": 0, "edges": 0}
 
         analytics = compute_analytics(nodes, edges)
-        communities = detect_communities(nodes, edges)
-
-        by_id = {c["id"]: c for c in communities.get("communities", [])}
-        centrality = analytics.get("betweenness", {})
+        comm_map = node_community_map(nodes, edges)
+        centrality = node_betweenness_map(nodes, edges)
+        pagerank = node_pagerank_map(nodes, edges)
 
         async with session_factory()() as db:
             for n in nodes:
@@ -49,8 +56,12 @@ async def graph_analytics_pass() -> dict:
                 )).scalar_one_or_none()
                 if node is None:
                     continue
-                node.community_id = (by_id.get(n["id"]) or {}).get("community")
-                node.betweenness_score = centrality.get(n["id"])
+                node.community_id = comm_map.get(str(n["id"]))
+                node.betweenness_score = centrality.get(str(n["id"]), 0.0)
+                node.node_metadata = {
+                    **(node.node_metadata or {}),
+                    "pagerank": round(pagerank.get(str(n["id"]), 0.0), 5),
+                }
             # Snapshot for Replay (plan §10).
             payload = {
                 "nodes": [
@@ -58,7 +69,9 @@ async def graph_analytics_pass() -> dict:
                         "id": n["id"],
                         "label": n.get("label"),
                         "entity_type": n.get("entity_type"),
-                        "community_id": (by_id.get(n["id"]) or {}).get("community"),
+                        "community_id": comm_map.get(str(n["id"])),
+                        "betweenness": centrality.get(str(n["id"]), 0.0),
+                        "pagerank": pagerank.get(str(n["id"]), 0.0),
                     }
                     for n in nodes
                 ],
@@ -75,7 +88,7 @@ async def graph_analytics_pass() -> dict:
             "ok": True,
             "nodes": len(nodes),
             "edges": len(edges),
-            "communities": len(by_id),
+            "communities": len(set(comm_map.values())),
         }
     except Exception as exc:
         logger.error("graph_analytics_pass failed: %s", exc)

@@ -7,6 +7,11 @@ backfill reconstructs the projection from the real source tables
 (`relationship.persons`, `relationship.interactions`) and the vault notes,
 reusing the exact same upsert helpers as the live adapter. Safe to run any
 time: it only upserts to match the sources, never deletes.
+
+The note projection also rebuilds the rich knowledge graph — Obsidian
+wikilinks become `links_to` edges, tags become `topic` nodes (`tagged_with`),
+top-level folders become `area` nodes (`belongs_to`), and journal days are
+linked into a chronological `chronology` spine.
 """
 
 from __future__ import annotations
@@ -53,8 +58,9 @@ async def _prune_stale() -> None:
     """Delete projection nodes that no longer mirror a real source row.
 
     Keeps `graph.graph_nodes` an exact projection: person/interaction nodes
-    reference existing relationship rows, and note nodes reference existing
-    vault files. Edges cascade on node delete.
+    reference existing relationship rows, note nodes reference existing vault
+    files, and area/topic nodes are derived from the vault's folder structure +
+    tags (kept, they carry no external ref_id). Edges cascade on node delete.
     """
     from backend.db.postgres.schemas.graph.models import GraphNode
 
@@ -71,7 +77,8 @@ async def _prune_stale() -> None:
         keep.update(("note", str(p)) for p in await _note_paths())
         stale = [
             n for n in nodes
-            if (n.entity_type, n.ref_id) not in keep
+            if n.entity_type not in ("area", "topic")
+            and (n.entity_type, n.ref_id) not in keep
         ]
         for n in stale:
             await db.delete(n)
@@ -88,8 +95,8 @@ async def backfill_graph(prune: bool = True) -> dict:
             (default True). Tests pass ``prune=False`` to avoid touching nodes
             that reference other data while their vault is monkeypatched.
 
-    Returns ``{"ok": True, "persons": n, "interactions": n, "notes": n,
-    "edges": n}`` — counts reflect what the projection now contains.
+    Returns counts by entity type plus total edges — what the projection now
+    contains (persons, interactions, notes, areas, topics).
     """
     person_rows = interaction_rows = 0
     async with session_factory()() as db:
@@ -111,14 +118,33 @@ async def backfill_graph(prune: bool = True) -> dict:
         await _prune_stale()
 
     edges = await _edge_count()
+    node_counts = await _node_counts()
     logger.info(
-        "graph backfill complete: persons=%d interactions=%d notes=%d edges=%d",
-        person_rows, interaction_rows, notes, edges,
+        "graph backfill complete: persons=%d interactions=%d notes=%d areas=%d topics=%d edges=%d",
+        person_rows, interaction_rows, notes,
+        node_counts.get("area", 0), node_counts.get("topic", 0), edges,
     )
     return {
         "ok": True,
         "persons": person_rows,
         "interactions": interaction_rows,
         "notes": notes,
+        "areas": node_counts.get("area", 0),
+        "topics": node_counts.get("topic", 0),
         "edges": edges,
+        "by_type": node_counts,
     }
+
+
+async def _node_counts() -> dict:
+    """Count graph nodes grouped by entity_type."""
+    from sqlalchemy import func
+
+    from backend.db.postgres.schemas.graph.models import GraphNode
+
+    async with session_factory()() as db:
+        rows = (await db.execute(
+            select(GraphNode.entity_type, func.count())
+            .group_by(GraphNode.entity_type)
+        )).all()
+    return {rtype: count for rtype, count in rows}

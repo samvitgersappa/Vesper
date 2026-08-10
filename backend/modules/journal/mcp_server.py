@@ -19,6 +19,7 @@ from backend.modules.journal.logic import (
     complete_day as _complete_day,
     delete_expense as _delete_expense,
     delete_workout as _delete_workout,
+    enrich_entry as _enrich_entry,
     get_entry as _get_entry,
     get_mood_streak as _get_mood_streak,
     log_expense as _log_expense,
@@ -124,6 +125,12 @@ async def get_mood_streak() -> dict:
 async def complete_day(date: str = "", complete: bool = True) -> dict:
     """Mark today's journal complete (Daily Journal Questionnaire finishing, §12.1)."""
     return await _complete_day(date, complete)
+
+
+@mcp.tool()
+async def enrich_entry(date: str = "") -> dict:
+    """Graph-optimise a journal note: rich frontmatter, prev/next nav, Connected block."""
+    return await _enrich_entry(date)
 
 
 def main() -> None:

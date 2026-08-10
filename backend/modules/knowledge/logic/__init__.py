@@ -588,17 +588,14 @@ async def _append_journal(utterance: str, flagged: bool = False) -> Optional[str
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write("\n" + line + "\n")
         else:
+            from backend.modules.journal.format import render_new_note
+
             today = date.today()
-            content = (
-                "---\n"
-                f"title: {today.isoformat()}\n"
-                "type: journal\n"
-                "status: draft\n"
-                "tags: []\n"
-                "confidence: 1.0\n"
-                "---\n\n"
-                f"# {today.strftime('%B %d, %Y')}\n\n"
-                f"{line}\n"
+            content = render_new_note(
+                today,
+                tags=[],
+                category="GENERAL",
+                body=f"{line}\n",
             )
             path.write_text(content, encoding="utf-8")
         return str(path.relative_to(root))
@@ -632,8 +629,19 @@ async def _create_vault_note(utterance: str, note_body: Optional[str] = None) ->
     # double-wrap it under "## The Idea". Raw utterances get the plain wrapper.
     structured = bool(note_body and note_body.strip())
 
+    def _related_block() -> str:
+        """Seed `## Related` with vault notes whose titles appear in the body,
+        so new captures join the Obsidian graph instead of floating alone."""
+        from backend.modules.journal.format import related_links
+
+        rels = related_links(body, root, limit=8)
+        if not rels:
+            return ""
+        return "\n".join(f"- [[{r}]]" for r in rels)
+
     def _write() -> str:
         path.parent.mkdir(parents=True, exist_ok=True)
+        related = _related_block()
         if structured:
             content = (
                 "---\n"
@@ -645,7 +653,8 @@ async def _create_vault_note(utterance: str, note_body: Optional[str] = None) ->
                 "confidence: 1.0\n"
                 "---\n\n"
                 f"{body}\n\n"
-                "## Related\n\n\n"
+                "## Related\n\n"
+                f"{related}\n\n"
                 "## Notes\n\n"
                 f"- Captured via knowledge.capture on {date.today().isoformat()}.\n"
             )
@@ -660,7 +669,8 @@ async def _create_vault_note(utterance: str, note_body: Optional[str] = None) ->
                 "confidence: 1.0\n"
                 "---\n\n"
                 f"## The Idea\n\n{body}\n\n"
-                "## Related\n\n\n"
+                "## Related\n\n"
+                f"{related}\n\n"
                 "## Notes\n\n"
                 f"- Captured via knowledge.capture on {date.today().isoformat()}.\n"
             )

@@ -29,6 +29,7 @@ from sqlalchemy import select
 from backend.db.postgres.schemas.journal.models import DiaryEntry, Spending, Workout
 from backend.modules.common import publish
 from backend.modules.db import session_factory
+from backend.modules.journal.format import enrich_markdown, render_new_note
 from backend.modules.journal.vault import (
     entry_path,
     read_entry_file,
@@ -156,7 +157,10 @@ def _derive_title(text: str, source: str, d: date) -> str:
 def _build_content(d: date, body: str, append: bool) -> str:
     if append:
         return body
-    return f"# {d.isoformat()}\n\n{body}"
+    # New (non-today) entries get the full graph-optimised template: rich
+    # frontmatter, chronological nav links and a section skeleton — Obsidian/Quartz
+    # graph nodes need more than flat text appended at the end of the file.
+    return render_new_note(d, body=body)
 
 
 def _entry_meta(e: DiaryEntry) -> dict[str, Any]:
@@ -375,6 +379,48 @@ async def update_entry(date: str, new_content: str) -> dict[str, Any]:
         "path": res["path"],
         "word_count": res["word_count"],
         "message": "journal entry updated",
+    }
+
+
+async def enrich_entry(date: str = "") -> dict[str, Any]:
+    """Idempotently upgrade a vault journal note for Obsidian/Quartz graphing.
+
+    Uses `journal.format.enrich_markdown`: ensures rich YAML frontmatter,
+    chronological prev/next navigation wikilinks and a `## Connected` block
+    listing the entry's wikilinks plus resolvable people/topics. No-op when the
+    note is already enriched; never raises against a missing entry.
+    """
+    d = _parse_date(date or "")
+    res = read_entry_file(d)
+    if not res["ok"]:
+        return {
+            "ok": False,
+            "date": d.isoformat(),
+            "path": str(entry_path(d)),
+            "message": res["message"],
+            "enriched": False,
+        }
+    content, changed = enrich_markdown(res["content"], d, vault_root())
+    if not changed:
+        return {
+            "ok": True,
+            "date": d.isoformat(),
+            "path": res["path"],
+            "enriched": False,
+            "message": "journal entry already graph-optimised",
+        }
+    wres = write_entry_file(d, content, append=False)
+    if not wres["ok"]:
+        return {**wres, "enriched": False}
+    await _update_entry_word_count(d, wres["word_count"])
+    publish(KNOWLEDGE_INDEXED, {"path": wres["path"], "action": "journal_enrich"})
+    return {
+        "ok": True,
+        "date": d.isoformat(),
+        "path": wres["path"],
+        "enriched": True,
+        "word_count": wres["word_count"],
+        "message": "journal entry enriched for the Obsidian graph",
     }
 
 
@@ -610,6 +656,10 @@ async def complete_day(date_str: str = "", complete: bool = True) -> dict[str, A
 
     If no metadata row exists yet, it is created with complete set (the
     questionnaire's placeholder path, §2.6).
+
+    When completing, the vault note is also enriched into an Obsidian/Quartz
+    graph-friendly shape (frontmatter, prev/next navigation, `## Connected`
+    block with wikilinks) so the daily entry is a well-linked node.
     """
     d = _parse_date(date_str or "")
     try:
@@ -637,6 +687,13 @@ async def complete_day(date_str: str = "", complete: bool = True) -> dict[str, A
         logger.warning("complete_day metadata failed: %s", exc)
         return {"ok": False, "date": d.isoformat(), "message": str(exc)}
 
+    enriched = False
+    if complete:
+        try:
+            enriched = (await enrich_entry(d.isoformat())).get("enriched", False)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("complete_day enrich failed: %s", exc)
+
     publish(DAILY_JOURNAL_COMPLETED, {
         "date": d.isoformat(),
         "complete": bool(complete),
@@ -647,6 +704,7 @@ async def complete_day(date_str: str = "", complete: bool = True) -> dict[str, A
         "date": d.isoformat(),
         "complete": bool(complete),
         "entry_id": entry_id,
+        "enriched": bool(complete) and enriched,
     }
 
 

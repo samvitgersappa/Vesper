@@ -40,24 +40,57 @@ same order every day). Do **not** re-read the YAML per question — load once at
 The vault journal must be a **connected graph node**, not flat text. Every entry
 should surface in the Quartz garden with proper wikilinks:
 
-1. **People as wikilinks** — every person you mention must be linked with
+1. **Write verbosely and specifically.** Each answer is a short paragraph (2–4
+   sentences), not a single line — name actual people, places, projects,
+   decisions, emotions, and numbers. A link-rich, detailed record compounds into
+   a genuinely useful second brain; a terse one does not.
+
+2. **People as wikilinks** — every person you mention must be linked with
    `[[person-slug]]` (the exact filename stem of their vault note in lower-case).
    Before writing, use `mcp__knowledge__search` to find people notes under
    `05 People/`. For people without existing notes, create a one-line stub.
 
-2. **Topic cross-references** — if today mentions a skill, project, or concept
+3. **Topic cross-references** — if today mentions a skill, project, or concept
    that has a vault note (in `03 Knowledge/`, `04 Learning/`, `06 Finance/`),
-   link it with `[[note-slug]]`.
+   link it with `[[note-slug]]`. When an answer names something reusable, create
+   the note now via `knowledge.capture` (not just a link to a note that doesn't
+   exist yet).
 
-3. **Use `##` section headings** (Mood, Highlights, Workout, Expenses,
-   Reminders, Notes, Connected). This keeps journal entries readable and the
-   Quartz table of contents works.
+4. **Use `##` section headings** (Mood, Highlights, Learning, Workout, Expenses,
+   Reminders, People, Connected, Tomorrow). This keeps journal entries readable
+   and the Quartz table of contents works.
 
-4. **Create stub People notes as needed.** If a person has no note yet, create
+5. **Create stub People notes as needed.** If a person has no note yet, create
    a minimal one-liner under `05 People/person-name.md` so the wikilink resolves.
+
+6. **Mirror the graph template.** When the machine-facing
+   `journal.enrich_entry` / `journal.complete_day` step runs it rewrites
+   frontmatter and the `## Connected` block automatically — keep your own
+   sections' *content* rich and specific so that rewrite has real links to keep.
 
 Do NOT exhaustively search — linking 2-3 people and 1-2 topics per entry is
 enough. The graph improves incrementally with each day's links.
+
+## Verbosity & detail bar
+
+Each answered question becomes a paragraph with concrete specifics:
+
+- **Mood** — 1–2 lines: the word plus *why*; name the trigger (a meeting, a
+  workout skipped, weather, a win).
+- **Highlights / accomplishments** — name the task/project, the outcome, and any
+  ripple effect (who it helped, what it unblocks).
+- **Learning** — state the concept, the source (video/book/conversation), and
+  where you plan to apply it. Link `[[learning-note]]` where it exists.
+- **Workout** — what you did, sets/reps or distance, muscle groups, how it felt.
+- **Expenses** — via `journal.log_expense`: amount, item, category (Food,
+  Travel/Transport, Shopping, Bills/Utilities, Health, Entertainment, Other).
+- **Reminders** — dated when possible (routed to a real Reminder row).
+- **People / Connected** — who, in what context, why it mattered.
+- **Tomorrow** — the top 1–3 concrete things, not a vague "work stuff".
+
+A complete entry lands between ~180–500 words. If your answers come out shorter
+than ~150 words, you've left concrete detail on the table — expand before you
+finish.
 
 ## Persist each answer immediately (§2.4, §6 durability)
 
