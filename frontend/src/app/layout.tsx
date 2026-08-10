@@ -15,10 +15,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0a0c12" },
-    { media: "(prefers-color-scheme: light)", color: "#f4f6fb" },
-  ],
+  themeColor: "#0a0c12",
 };
 
 export default function RootLayout({
@@ -27,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={inter.variable} data-theme="dark">
       <body>
         <Nav />
         <main className="main">{children}</main>

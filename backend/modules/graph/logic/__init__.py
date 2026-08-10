@@ -88,6 +88,42 @@ def _edge_dict(e: GraphEdge) -> dict[str, Any]:
 
 # ─── Pure network-science helpers (DB-free, testable) ───────────────
 
+def _pure_pagerank(
+    G: "nx.Graph", alpha: float = 0.85, max_iter: int = 100, tol: float = 1e-6
+) -> dict[str, float]:
+    """Pure-Python power-iteration PageRank (no scipy required).
+
+    Mirrors networkx's unweighted pagerank for undirected graphs: each node
+    starts at 1/N; every iteration redistributes alpha of its rank along its
+    edges plus the leak (dangling/zero-degree) term. Deterministic and cheap on
+    graphs up to ~10k edges.
+    """
+    nodes = list(G.nodes)
+    n = len(nodes)
+    if n == 0:
+        return {}
+    if n == 1:
+        return {nodes[0]: 1.0}
+    idx = {nid: i for i, nid in enumerate(nodes)}
+    out_deg = [float(G.degree(nid)) for nid in nodes]
+    rank = [1.0 / n] * n
+    for _ in range(max_iter):
+        new_rank = [(1.0 - alpha) / n] * n
+        dangle = alpha * sum(r for r, deg in zip(rank, out_deg) if deg == 0) / n
+        for i, nid in enumerate(nodes):
+            if out_deg[i] == 0:
+                continue
+            share = alpha * rank[i] / out_deg[i]
+            for neighbor in G.neighbors(nid):
+                new_rank[idx[neighbor]] += share
+        new_rank = [v + dangle for v in new_rank]
+        diff = sum(abs(a - b) for a, b in zip(new_rank, rank))
+        rank = new_rank
+        if diff < tol:
+            break
+    return {nid: r for nid, r in zip(nodes, rank)}
+
+
 def _build_graph(nodes: list[dict], edges: list[dict]) -> nx.Graph:
     """networkx Graph from plain node/edge dicts (induced subgraph).
 
@@ -138,8 +174,9 @@ def compute_analytics(
 
     Builds a networkx Graph, then computes node/edge count, density, connected
     components, largest component size, top-5 degree centrality, top-5
-    betweenness centrality, and communities (Louvain for persons, connected
-    components otherwise). Empty graphs return zeros/empty — never raises.
+    betweenness centrality, top-5 pagerank, average clustering, and communities
+    (Louvain for persons, connected components otherwise). Empty graphs return
+    zeros/empty — never raises.
     """
     G = _build_graph(nodes, edges)
     n_nodes = G.number_of_nodes()
@@ -153,8 +190,10 @@ def compute_analytics(
             "density": 0.0,
             "connected_components": 0,
             "largest_component_size": 0,
+            "avg_clustering": 0.0,
             "top_degree": [],
             "top_betweenness": [],
+            "top_pagerank": [],
             "communities": [],
         }
 
@@ -181,12 +220,32 @@ def compute_analytics(
         for n, s in sorted(betweenness.items(), key=lambda kv: -kv[1])[:5]
     ]
 
+    pagerank: dict = {}
+    try:
+        pagerank = nx.pagerank(G, weight="weight")
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("pagerank failed: %s", exc)
+        # scipy is optional; fall back to a pure-Python power iteration so the
+        # nightly graph job and the API work without an extra heavyweight dep.
+        pagerank = _pure_pagerank(G)
+    top_pagerank = [
+        {"id": str(n), "label": labels.get(str(n)), "score": round(float(s), 4)}
+        for n, s in sorted(pagerank.items(), key=lambda kv: -kv[1])[:5]
+    ]
+
+    avg_clustering = 0.0
+    if n_nodes >= 2:
+        try:
+            avg_clustering = float(nx.average_clustering(G, weight="weight"))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("average clustering failed: %s", exc)
+
     comm_map = _node_communities(nodes, edges, entity_type)
     grouped: dict[str, list[str]] = {}
     for nid, cid in comm_map.items():
         grouped.setdefault(cid, []).append(nid)
     communities = [
-        {"id": cid, "member_count": len(members)}
+        {"id": cid, "member_count": len(members), "members": members[:50]}
         for cid, members in sorted(grouped.items(), key=lambda kv: -len(kv[1]))
     ]
 
@@ -197,8 +256,10 @@ def compute_analytics(
         "density": round(float(density), 4),
         "connected_components": n_components,
         "largest_component_size": largest,
+        "avg_clustering": round(avg_clustering, 4),
         "top_degree": top_degree,
         "top_betweenness": top_betweenness,
+        "top_pagerank": top_pagerank,
         "communities": communities,
     }
 
@@ -223,6 +284,41 @@ def detect_communities(
         {"id": cid, "members": members}
         for cid, members in sorted(grouped.items(), key=lambda kv: -len(kv[1]))
     ]
+
+
+def node_community_map(
+    nodes: list[dict], edges: list[dict], entity_type: str = ""
+) -> dict[str, str]:
+    """Map node_id -> community_id string (Louvain for persons, components otherwise)."""
+    return _node_communities(nodes, edges, entity_type)
+
+
+def node_betweenness_map(
+    nodes: list[dict], edges: list[dict]
+) -> dict[str, float]:
+    """Map node_id -> betweenness score (weighted), empty graph -> {}."""
+    G = _build_graph(nodes, edges)
+    if G.number_of_nodes() < 2:
+        return {}
+    try:
+        return {str(n): float(s) for n, s in nx.betweenness_centrality(G, weight="weight").items()}
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("node betweenness map failed: %s", exc)
+        return {}
+
+
+def node_pagerank_map(
+    nodes: list[dict], edges: list[dict]
+) -> dict[str, float]:
+    """Map node_id -> pagerank score (weighted), empty graph -> {}."""
+    G = _build_graph(nodes, edges)
+    if G.number_of_nodes() == 0:
+        return {}
+    try:
+        return {str(n): float(s) for n, s in nx.pagerank(G, weight="weight").items()}
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("node pagerank map failed (falling back to pure-py): %s", exc)
+        return _pure_pagerank(G)
 
 
 # ─── DB reads (read-only, never commit) ─────────────────────────────

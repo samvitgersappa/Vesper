@@ -270,7 +270,9 @@ async def _funnel_candidates(date: str) -> list[dict]:
                 ),
                 {"d": date, "n": WATCHLIST_SIZE * 2},
             )).all()
-    return [dict(r._mapping) for r in rows]
+    from backend.modules.finance.catalyst.scores import select_diversified_candidates
+
+    return select_diversified_candidates([dict(r._mapping) for r in rows], WATCHLIST_SIZE)
 
 
 async def _open_count(db, date: str) -> tuple[int, int]:

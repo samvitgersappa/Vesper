@@ -1,476 +1,189 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide, forceX, forceY } from "d3-force";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { forceCenter, forceCollide, forceLink, forceManyBody, forceRadial, forceSimulation, forceX, forceY } from "d3-force";
 import { drag } from "d3-drag";
-import { zoom } from "d3-zoom";
 import { pointer, select } from "d3-selection";
+import { zoom, zoomIdentity, type ZoomBehavior } from "d3-zoom";
 import { api } from "../../lib/api";
-import PageHeader from "../../components/PageHeader";
 
-type RawNode = {
+type Person = {
   id: string;
-  entity_type: string;
-  label: string;
-  ref_id?: string;
-  metadata?: Record<string, any>;
-  degree: number;
+  name: string;
+  category?: string;
+  health_score?: number;
+  betweenness?: number;
+  community_id?: string | number;
+  company?: string;
+  occupation?: string;
+  last_contacted?: string;
+  birthday?: string;
+  anniversary?: string;
+  contact_frequency_days?: number;
+  streak_weeks?: number;
+  email?: string;
+  phone?: string;
+  profile_notes?: string;
+  topics_of_interest?: string[];
+  [key: string]: any;
 };
-type RawEdge = {
-  source_id: string;
-  target_id: string;
-  edge_type: string;
-  weight: number;
-};
-type GNode = RawNode & { x?: number; y?: number; fx?: number | null; fy?: number | null };
-type GEdge = RawEdge & { source: any; target: any };
+type Edge = { id?: string; person_a_id: string; person_b_id: string; strength?: string; label?: string; weight?: number };
+type SimNode = Person & { x?: number; y?: number; fx?: number | null; fy?: number | null; isCenter?: boolean; _radius?: number };
 
-const NODE_COLORS: Record<string, string> = {
-  person: "#6ea8fe",
-  interaction: "#d8a94e",
-  note: "#4caf7d",
-  project: "#c792ea",
-  calendar: "#56b6c2",
-  study: "#e06c75",
-  finance: "#e5c07b",
+const CATEGORIES = ["FAMILY", "FRIENDS", "IMPORTANT", "COUSINS", "RELATIVES", "COLLEAGUES", "NEW_CONTACT", "NETWORK"];
+const CATEGORY_COLORS: Record<string, string> = {
+  FAMILY: "#fb7185", FRIENDS: "#f59e0b", IMPORTANT: "#facc15", COUSINS: "#c084fc",
+  RELATIVES: "#e879f9", COLLEAGUES: "#2dd4bf", NEW_CONTACT: "#60a5fa", NETWORK: "#94a3b8",
 };
-const EDGE_COLORS: Record<string, string> = {
-  participated: "#d8a94e",
-  introduced_by: "#6ea8fe",
-  related: "#8b93a3",
+const CATEGORY_LABELS: Record<string, string> = {
+  FAMILY: "Family", FRIENDS: "Friends", IMPORTANT: "Important", COUSINS: "Cousins",
+  RELATIVES: "Relatives", COLLEAGUES: "Colleagues", NEW_CONTACT: "New contact", NETWORK: "Network",
 };
 
-const TYPE_ORDER = ["person", "interaction", "note"];
+function health(score?: number) {
+  if (score === undefined || score === null) return { label: "No signal", color: "#94a3b8" };
+  if (score >= 0.8) return { label: "Healthy", color: "#22c55e" };
+  if (score >= 0.4) return { label: "Drifting", color: "#f59e0b" };
+  return { label: "Needs attention", color: "#ef4444" };
+}
 
-function nodeRadius(t: string) {
-  return t === "person" ? 12 : t === "interaction" ? 8 : 6;
+function daysSince(date?: string) {
+  if (!date) return null;
+  return Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 86400000));
+}
+
+function shapePath(category: string, x: number, y: number, r: number) {
+  const sides = category === "FRIENDS" ? 3 : category === "COUSINS" ? 4 : category === "RELATIVES" ? 5 : category === "COLLEAGUES" ? 6 : 0;
+  if (!sides) return `M ${x - r} ${y} a ${r} ${r} 0 1 0 ${r * 2} 0 a ${r} ${r} 0 1 0 ${-r * 2} 0`;
+  const points = Array.from({ length: sides }, (_, i) => {
+    const a = -Math.PI / 2 + i * (Math.PI * 2 / sides);
+    return `${x + Math.cos(a) * r} ${y + Math.sin(a) * r}`;
+  });
+  return `M ${points.join(" L ")} Z`;
 }
 
 export default function Graph() {
-  const [raw, setRaw] = useState<{ nodes: RawNode[]; edges: RawEdge[] }>({ nodes: [], edges: [] });
+  const [nodes, setNodes] = useState<Person[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+  const [stats, setStats] = useState<Record<string, any>>({});
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<Person | null>(null);
+  const [detail, setDetail] = useState<Record<string, any> | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; person: Person; connections: number } | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [showLabels, setShowLabels] = useState(true);
+  const [showLegend, setShowLegend] = useState(true);
   const [error, setError] = useState("");
-  const [enabled, setEnabled] = useState<Set<string>>(new Set(TYPE_ORDER));
-  const [selected, setSelected] = useState<GNode | null>(null);
-  const [detail, setDetail] = useState<{ loading: boolean; data: any }>({ loading: false, data: null });
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; sub: string } | null>(null);
-
   const svgRef = useRef<SVGSVGElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const hoveredRef = useRef<string | null>(null);
-  const selectedRef = useRef<GNode | null>(null);
-  selectedRef.current = selected;
+  const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const [nodesRes, edgesRes] = await Promise.all([
-          api<Record<string, any>>("/graph/nodes", { limit: 2000 }),
-          api<Record<string, any>>("/graph/edges", { limit: 4000 }),
-        ]);
-        const nlist = (nodesRes.nodes ?? nodesRes ?? []) as any[];
-        const elist = (edgesRes.edges ?? edgesRes ?? []) as any[];
-        const deg = new Map<string, number>();
-        for (const e of elist) {
-          deg.set(String(e.source_id), (deg.get(String(e.source_id)) ?? 0) + 1);
-          deg.set(String(e.target_id), (deg.get(String(e.target_id)) ?? 0) + 1);
-        }
-        setRaw({
-          nodes: nlist.map((n) => ({
-            id: String(n.id ?? n.node_id ?? n.name),
-            entity_type: n.entity_type ?? n.node_type ?? n.type ?? "node",
-            label: n.label ?? n.name ?? n.id ?? "?",
-            ref_id: n.ref_id,
-            metadata: n.metadata ?? {},
-            degree: deg.get(String(n.id)) ?? 0,
-          })),
-          edges: elist.map((e) => ({
-            source_id: String(e.source_id ?? e.source ?? e.from),
-            target_id: String(e.target_id ?? e.target ?? e.to),
-            edge_type: e.edge_type ?? e.type ?? "related",
-            weight: Number(e.weight) || 1,
-          })),
-        });
-      } catch (e: any) {
-        setError(e.message);
-      }
-    })();
+    Promise.all([
+      api<{ nodes: Person[]; edges: Edge[] }>("/relationship/graph", { limit: 300 }),
+      api<Record<string, any>>("/relationship/stats"),
+    ]).then(([graph, networkStats]) => {
+      setNodes(graph.nodes ?? []);
+      setEdges(graph.edges ?? []);
+      setStats(networkStats);
+    }).catch((e: any) => setError(e.message));
   }, []);
 
-  const types = useMemo(() => {
-    const order = new Map(TYPE_ORDER.map((t, i) => [t, i]));
-    const uniq = Array.from(new Set(raw.nodes.map((n) => n.entity_type)));
-    return uniq.sort((a, b) => (order.get(a) ?? 99) - (order.get(b) ?? 99));
-  }, [raw.nodes]);
-
   const filtered = useMemo(() => {
-    const nodeIds = new Set(raw.nodes.filter((n) => enabled.has(n.entity_type)).map((n) => n.id));
-    const nodes = raw.nodes.filter((n) => enabled.has(n.entity_type));
-    const edges = raw.edges.filter((e) => nodeIds.has(e.source_id) && nodeIds.has(e.target_id));
-    return { nodes, edges };
-  }, [raw, enabled]);
-
-  const adjacency = useMemo(() => {
-    const m = new Map<string, Set<string>>();
-    for (const e of filtered.edges) {
-      m.set(e.source_id, (m.get(e.source_id) ?? new Set()).add(e.target_id));
-      m.set(e.target_id, (m.get(e.target_id) ?? new Set()).add(e.source_id));
-    }
-    return m;
-  }, [filtered]);
-
-  const toggleType = (t: string) => {
-    setEnabled((prev) => {
-      const next = new Set(prev);
-      if (next.has(t)) next.delete(t);
-      else next.add(t);
-      return next;
+    const q = query.trim().toLowerCase();
+    return nodes.filter((p) => {
+      if (hidden.has(p.category ?? "NETWORK")) return false;
+      return !q || [p.name, p.company, p.occupation, p.category].some((v) => String(v ?? "").toLowerCase().includes(q));
     });
-  };
+  }, [nodes, query, hidden]);
+
+  const visibleIds = useMemo(() => new Set(filtered.map((p) => p.id)), [filtered]);
+  const filteredEdges = useMemo(() => edges.filter((e) => visibleIds.has(e.person_a_id) && visibleIds.has(e.person_b_id)), [edges, visibleIds]);
 
   useEffect(() => {
-    if (!filtered.nodes.length || !svgRef.current) return;
     const svgEl = svgRef.current;
-    const W = svgEl.clientWidth || 1100;
-    const H = svgEl.clientHeight || 600;
-
+    if (!svgEl || !filtered.length) return;
+    const W = svgEl.clientWidth || window.innerWidth;
+    const H = svgEl.clientHeight || window.innerHeight;
     const svg = select(svgEl);
     svg.selectAll("*").remove();
     svg.attr("viewBox", `0 0 ${W} ${H}`);
-
-    const defs = svg.append("defs");
-    for (const et of Object.keys(EDGE_COLORS)) {
-      const m = defs
-        .append("marker")
-        .attr("id", `arrow-${et}`)
-        .attr("viewBox", "0 -5 10 10")
-        .attr("refX", 22)
-        .attr("refY", 0)
-        .attr("markerWidth", 7)
-        .attr("markerHeight", 7)
-        .attr("orient", "auto");
-      m.append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", EDGE_COLORS[et]);
-    }
-
-    const rootG = svg.append("g");
-    const edgeG = rootG.append("g");
-    const nodeG = rootG.append("g");
-
-    const simNodes: GNode[] = filtered.nodes.map((n) => ({ ...n }));
-    const simEdges = filtered.edges.map((e) => ({ ...e, source: e.source_id, target: e.target_id })) as GEdge[];
-
-    const simulation = forceSimulation<GNode>(simNodes as GNode[])
-      .force(
-        "link",
-        forceLink<GNode, GEdge>(simEdges)
-          .id((d) => d.id)
-          .distance(110)
-          .strength(0.5),
-      )
-      .force("charge", forceManyBody().strength(-240))
+    const root = svg.append("g");
+    const center: SimNode = { id: "center", name: "YOU", category: "CENTER", isCenter: true, fx: W / 2, fy: H / 2 };
+    const simNodes: SimNode[] = [center, ...filtered.map((p) => ({ ...p }))];
+    const simLinks: any[] = filteredEdges.map((e) => ({ ...e, source: e.person_a_id, target: e.person_b_id }));
+    simNodes.slice(1).forEach((p) => simLinks.push({ source: "center", target: p.id, weight: 0.25, isCenterLink: true }));
+    const adjacent = new Map<string, Set<string>>();
+    filteredEdges.forEach((e) => { adjacent.set(e.person_a_id, (adjacent.get(e.person_a_id) ?? new Set()).add(e.person_b_id)); adjacent.set(e.person_b_id, (adjacent.get(e.person_b_id) ?? new Set()).add(e.person_a_id)); });
+    const simulation = forceSimulation(simNodes)
+      .force("link", forceLink<any, any>(simLinks).id((d: SimNode) => d.id).distance((d: any) => d.isCenterLink ? 170 : 105).strength((d: any) => d.isCenterLink ? 0.08 : 0.42))
+      .force("charge", forceManyBody().strength(-240).distanceMax(750))
       .force("center", forceCenter(W / 2, H / 2))
-      .force("collide", forceCollide<GNode>().radius((d) => nodeRadius(d.entity_type) + 10))
-      .force("x", forceX(W / 2).strength(0.07))
-      .force("y", forceY(H / 2).strength(0.07));
-
-    const line = edgeG
-      .selectAll("line")
-      .data(simEdges)
-      .join("line")
-      .attr("stroke", (e: GEdge) => EDGE_COLORS[e.edge_type] ?? EDGE_COLORS.related)
-      .attr("stroke-width", (e: GEdge) => Math.min(1.5 + e.weight, 4))
-      .attr("stroke-opacity", 0.65)
-      .attr("marker-end", (e: GEdge) => `url(#arrow-${e.edge_type})`);
-
-    const nodeSel = nodeG
-      .selectAll("g.node")
-      .data(simNodes)
-      .join("g")
-      .attr("class", "node")
-      .style("cursor", "pointer");
-
-    nodeSel
-      .append("circle")
-      .attr("r", (d) => nodeRadius(d.entity_type))
-      .attr("fill", (d) => NODE_COLORS[d.entity_type] ?? "#8b93a3");
-
-    nodeSel
-      .append("text")
-      .attr("class", "nlabel")
-      .attr("x", (d) => nodeRadius(d.entity_type) + 4)
-      .attr("y", 4)
-      .attr("font-size", 11)
-      .attr("fill", "#c9d1d9");
-
-    let dragged = false;
-
-    nodeSel
-      .on("mouseenter", (event, d: GNode) => {
-        hoveredRef.current = d.id;
-        const [mx, my] = pointer(event, svgEl);
-        setTooltip({ x: mx, y: my, label: d.label, sub: `${d.entity_type}${d.ref_id ? " · " + d.ref_id : ""}` });
-        applyActive();
-      })
-      .on("mousemove", (event) => {
-        const [mx, my] = pointer(event, svgEl);
-        setTooltip((t) => (t ? { ...t, x: mx, y: my } : t));
-      })
-      .on("mouseleave", () => {
-        hoveredRef.current = null;
-        setTooltip(null);
-        applyActive();
-      })
-      .on("click", (event, d: GNode) => {
-        if (dragged) return;
-        event.stopPropagation();
-        selectNode(d);
-      });
-
-    (nodeSel as any).call(
-      drag<SVGGElement, GNode>()
-        .on("start", (event, d) => {
-          dragged = false;
-          if (!event.active) simulation.alphaTarget(0.3).restart();
-          d.fx = d.x;
-          d.fy = d.y;
-          event.sourceEvent?.stopPropagation();
-        })
-        .on("drag", (event, d) => {
-          dragged = true;
-          d.fx = event.x;
-          d.fy = event.y;
-        })
-        .on("end", (event, d) => {
-          if (!event.active) simulation.alphaTarget(0);
-          d.fx = null;
-          d.fy = null;
-        }),
-    );
-
-    const zoomBehavior = zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.15, 5])
-      .on("zoom", (event) => rootG.attr("transform", event.transform));
-    svg.call(zoomBehavior);
-    svg.on("dblclick.zoom", null);
-
-    const shown = (d: GNode) =>
-      d.entity_type === "person" || hoveredRef.current === d.id || selectedRef.current?.id === d.id;
-
-    function applyActive() {
-      const active = new Set<string>();
-      const hover = hoveredRef.current;
-      const sel = selectedRef.current?.id ?? null;
-      if (hover) {
-        active.add(hover);
-        (adjacency.get(hover) ?? []).forEach((n) => active.add(n));
-      }
-      if (sel) {
-        active.add(sel);
-        (adjacency.get(sel) ?? []).forEach((n) => active.add(n));
-      }
-      nodeSel.attr("opacity", (d: GNode) => {
-        if (!hover && !sel) return 1;
-        return active.has(d.id) ? 1 : 0.18;
-      });
-      line.attr("stroke-opacity", (e: GEdge) => {
-        const s = String(e.source?.id ?? e.source);
-        const t = String(e.target?.id ?? e.target);
-        if (!hover && !sel) return 0.65;
-        return active.has(s) && active.has(t) ? 0.95 : 0.08;
-      });
-      nodeSel.select("text").text((d: GNode) => (shown(d) ? d.label : ""));
-    }
-
-    simulation.on("tick", () => {
-      line
-        .attr("x1", (e: GEdge) => e.source.x)
-        .attr("y1", (e: GEdge) => e.source.y)
-        .attr("x2", (e: GEdge) => e.target.x)
-        .attr("y2", (e: GEdge) => e.target.y);
-      nodeSel.attr("transform", (d: GNode) => `translate(${d.x},${d.y})`);
-      applyActive();
-    });
-
-    svg.on("click", () => setSelected(null));
-
-    return () => {
-      simulation.stop();
-      svg.on(".zoom", null);
-      svg.on("click", null);
+      .force("radial", forceRadial((d: SimNode) => d.isCenter ? 0 : 110 + (1 - (d.health_score ?? 0.5)) * 170, W / 2, H / 2).strength(0.2))
+      .force("collide", forceCollide<SimNode>().radius((d) => d.isCenter ? 28 : 10 + (d.betweenness ?? 0) * 22).strength(1))
+      .force("x", forceX(W / 2).strength(0.04)).force("y", forceY(H / 2).strength(0.04));
+    const lines = root.append("g").selectAll("line").data(simLinks).join("line")
+      .attr("stroke", (e: any) => e.isCenterLink ? "rgba(255,255,255,.07)" : (e.strength === "STRONG" ? "#c9793f" : e.strength === "WEAK" ? "#5b7c99" : "#a78bfa"))
+      .attr("stroke-opacity", (e: any) => e.isCenterLink ? 0.3 : 0.65)
+      .attr("stroke-width", (e: any) => e.isCenterLink ? 1 : 1.3 + (e.weight ?? 0.6) * 1.5);
+    const group = root.append("g").selectAll("g.node").data(simNodes).join("g").attr("class", "node").style("cursor", "pointer");
+    group.append("circle").attr("class", "halo").attr("r", (d) => d.isCenter ? 32 : 0).attr("fill", "rgba(201,121,63,.18)");
+    group.append("path").attr("class", "node-shape").attr("fill", (d) => d.isCenter ? "#818cf8" : health(d.health_score).color).attr("stroke", (d) => d.isCenter ? "#c4b5fd" : CATEGORY_COLORS[d.category ?? "NETWORK"]).attr("stroke-width", 1.5);
+    group.append("text").attr("class", "nlabel").attr("text-anchor", "middle").attr("y", (d) => d.isCenter ? 48 : 24).attr("fill", "rgba(255,255,255,.88)").attr("font-size", (d) => d.isCenter ? 12 : 11).attr("font-weight", (d) => d.isCenter ? 700 : 500).text((d) => d.name);
+    const active = (id: string | null) => {
+      const ids = id ? new Set([id, ...(adjacent.get(id) ?? [])]) : null;
+      group.attr("opacity", (d: SimNode) => !ids || d.isCenter || ids.has(d.id) ? 1 : 0.13);
+      lines.attr("stroke-opacity", (e: any) => !ids || e.isCenterLink || (ids.has(e.source.id ?? e.source) && ids.has(e.target.id ?? e.target)) ? 0.8 : 0.05);
     };
-  }, [filtered, adjacency]);
+    group.on("mouseenter", (event, d: SimNode) => {
+      if (d.isCenter) return;
+      active(d.id);
+      const [x, y] = pointer(event, svgEl);
+      setTooltip({ x, y, person: d, connections: adjacent.get(d.id)?.size ?? 0 });
+    }).on("mouseleave", () => { active(null); setTooltip(null); }).on("click", (event, d: SimNode) => {
+      if (d.isCenter) return;
+      event.stopPropagation();
+      setSelected(d);
+      api<Record<string, any>>(`/relationship/person/${d.id}`).then(setDetail).catch((e: any) => setError(e.message));
+    });
+    let moved = false;
+    (group as any).call(drag<SVGGElement, SimNode>().on("start", (event, d) => { moved = false; if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; event.sourceEvent?.stopPropagation(); }).on("drag", (event, d) => { moved = true; d.fx = event.x; d.fy = event.y; }).on("end", (event, d) => { if (!event.active) simulation.alphaTarget(0); if (!d.isCenter) { d.fx = null; d.fy = null; } }));
+    const zoomBehavior = zoom<SVGSVGElement, unknown>().scaleExtent([0.25, 6]).on("zoom", (event) => root.attr("transform", event.transform));
+    zoomRef.current = zoomBehavior;
+    svg.call(zoomBehavior).on("click", () => { if (!moved) { setSelected(null); setDetail(null); } });
+    const draw = () => {
+      lines.attr("x1", (e: any) => e.source.x).attr("y1", (e: any) => e.source.y).attr("x2", (e: any) => e.target.x).attr("y2", (e: any) => e.target.y);
+      group.attr("transform", (d) => `translate(${d.x},${d.y})`);
+      group.select(".node-shape").attr("d", (d: SimNode) => shapePath(d.category ?? "NETWORK", 0, 0, d.isCenter ? 16 : 6 + (d.health_score ?? 0.5) * 6));
+      group.select(".nlabel").attr("opacity", (d: SimNode) => d.isCenter || showLabels ? 1 : 0);
+    };
+    simulation.on("tick", draw);
+    setTimeout(() => svg.call(zoomBehavior.transform, zoomIdentity.translate(0, 0).scale(Math.min(1.15, Math.max(0.7, W / 900)))), 450);
+    return () => { simulation.stop(); svg.on(".zoom", null); zoomRef.current = null; };
+  }, [filtered, filteredEdges, showLabels]);
 
-  const selectNode = useCallback(
-    async (n: GNode) => {
-      setSelected(n);
-      setDetail({ loading: true, data: null });
-      if (n.entity_type === "person" && n.ref_id) {
-        try {
-          const d = await api<Record<string, any>>(`/relationship/person/${n.ref_id}`);
-          setDetail({ loading: false, data: { kind: "person", payload: d } });
-        } catch (e: any) {
-          setDetail({ loading: false, data: { kind: "person", error: e.message } });
-        }
-      } else if (n.entity_type === "note") {
-        setDetail({
-          loading: false,
-          data: { kind: "note", payload: { label: n.label, vault_path: n.metadata?.vault_path ?? n.ref_id } },
-        });
-      } else {
-        setDetail({ loading: false, data: { kind: "interaction", payload: n } });
-      }
-    },
-    [],
-  );
-
-  const gardenLink = (rel: string) => {
-    if (!rel) return "#";
-    const slug = rel.replace(/\.md$/i, "").toLowerCase().split(" ").join("-");
-    const encoded = slug.split("/").map(encodeURIComponent).join("/");
-    const dev = process.env.NODE_ENV === "development";
-    return dev
-      ? `http://127.0.0.1:8081/${encoded}`
-      : `${window.location.origin}/brain/${encoded}`;
+  const selectedConnections = selected ? filteredEdges.filter((e) => e.person_a_id === selected.id || e.person_b_id === selected.id) : [];
+  const focusSelected = () => {
+    if (!selected || !svgRef.current || !zoomRef.current) return;
+    const svg = select(svgRef.current);
+    svg.transition().duration(450).call(zoomRef.current.scaleTo, 2.5);
   };
+  const toggleCategory = (category: string) => setHidden((current) => { const next = new Set(current); if (next.has(category)) next.delete(category); else next.add(category); return next; });
+  const resetCamera = () => { if (svgRef.current && zoomRef.current) select(svgRef.current).transition().duration(450).call(zoomRef.current.transform, zoomIdentity); };
+  const zoomBy = (factor: number) => { if (svgRef.current && zoomRef.current) select(svgRef.current).transition().duration(250).call(zoomRef.current.scaleBy, factor); };
+  const selectedHealth = health(selected?.health_score);
 
-  const counts = useMemo(() => {
-    const c = new Map<string, number>();
-    for (const n of raw.nodes) c.set(n.entity_type, (c.get(n.entity_type) ?? 0) + 1);
-    return c;
-  }, [raw.nodes]);
-
-  return (
-    <>
-      <PageHeader
-        title="Intelligence Graph"
-        subtitle="Everything Vesper knows, connected — people, interactions, notes and projects as one living network. Drag nodes, scroll to zoom, click to inspect."
-        accent="var(--graph)"
-        accentB="#9d7bff"
-      />
-      {error && <div className="error">{error}</div>}
-      <div className="graph-purpose"><span className="graph-purpose-mark">✦</span><div><strong>Follow a thread</strong><span>Hover to reveal context. Click a node to turn the network into a story.</span></div></div>
-      {!raw.nodes.length && !error && (
-        <div className="muted">
-          Graph is empty — nodes populate as the write adapter processes
-          events (PersonUpdated, InteractionLogged, KnowledgeIndexed).
-        </div>
-      )}
-
-      {raw.nodes.length > 0 && (
-        <div
-          ref={containerRef}
-          style={{ position: "relative", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden", background: "var(--panel)" }}
-        >
-          <div className="graph-toolbar">
-            <span className="graph-stats">
-              {raw.nodes.length} nodes · {filtered.edges.length} connections
-            </span>
-            <span className="graph-legend">
-              {types.map((t) => (
-                <button
-                  key={t}
-                  className={enabled.has(t) ? "legend-chip on" : "legend-chip"}
-                  onClick={() => toggleType(t)}
-                  title={enabled.has(t) ? "Click to hide" : "Click to show"}
-                >
-                  <span className="swatch" style={{ background: NODE_COLORS[t] ?? "#8b93a3" }} />
-                  {t} <span className="n">({counts.get(t) ?? 0})</span>
-                </button>
-              ))}
-            </span>
-          </div>
-          <svg ref={svgRef} width="100%" height="600" style={{ display: "block" }} />
-          {tooltip && (
-            <div
-              className="graph-tooltip"
-              style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}
-            >
-              <strong>{tooltip.label}</strong>
-              <span>{tooltip.sub}</span>
-            </div>
-          )}
-          {selected && (
-            <div className="graph-detail" onClick={(e) => e.stopPropagation()}>
-              <h3>
-                {selected.label} <span className="pill">{selected.entity_type}</span>
-              </h3>
-              {detail.loading ? (
-                <div className="muted">Loading…</div>
-              ) : detail.data?.kind === "person" ? (
-                detail.data.error ? (
-                  <div className="error">{detail.data.error}</div>
-                ) : (
-                  <DetailPerson data={detail.data.payload} />
-                )
-              ) : detail.data?.kind === "note" ? (
-                <DetailNote data={detail.data.payload} gardenLink={gardenLink} />
-              ) : detail.data?.kind === "interaction" ? (
-                <DetailInteraction node={selected} />
-              ) : null}
-            </div>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-function DetailPerson({ data }: { data: any }) {
-  return (
-    <div className="detail-body">
-      {data.found === false && <div className="muted">{data.message}</div>}
-      {data.found !== false && (
-        <>
-          <div className="detail-grid">
-            <div><span className="k">Category</span><span className="v">{data.category ?? "—"}</span></div>
-            <div><span className="k">Health</span><span className="v">{data.health_score ?? "—"}</span></div>
-            <div><span className="k">Company</span><span className="v">{data.company ?? "—"}</span></div>
-            <div><span className="k">Occupation</span><span className="v">{data.occupation ?? "—"}</span></div>
-          </div>
-          {(data.tags ?? []).length > 0 && (
-            <p className="tags">{data.tags.map((t: string) => <span key={t} className="tag">{t}</span>)}</p>
-          )}
-          {(data.recent_interactions ?? []).length > 0 && (
-            <ul className="detail-list">
-              {(data.recent_interactions as any[]).slice(0, 5).map((i: any) => (
-                <li key={i.id ?? i.event_date}>
-                  <strong>{i.type ?? "interaction"}</strong> · {i.event_date ?? "—"}
-                  {i.summary ? <span> — {i.summary}</span> : null}
-                </li>
-              ))}
-            </ul>
-          )}
-          <a className="btn" href="/people/" style={{ marginTop: 12, display: "inline-block" }}>
-            Open profile →
-          </a>
-        </>
-      )}
+  return <div className="graph-os">
+    <div className="graph-os-topbar">
+      <div className="graph-os-brand"><span className="graph-os-mark">◈</span><div><strong>Relationship OS</strong><small>your network, with context</small></div></div>
+      <div className="graph-os-search"><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search nodes…" /><kbd>⌘ K</kbd></div>
+      <div className="graph-os-actions"><button onClick={() => zoomBy(1.35)} title="Zoom in">＋</button><button onClick={() => zoomBy(0.74)} title="Zoom out">−</button><button className={showLabels ? "on" : ""} onClick={() => setShowLabels((v) => !v)} title="Toggle labels">Aa</button><button className={showLegend ? "on" : ""} onClick={() => setShowLegend((v) => !v)} title="Toggle legend">◌</button><button onClick={resetCamera} title="Reset camera">↻</button></div>
     </div>
-  );
-}
-
-function DetailNote({ data, gardenLink }: { data: any; gardenLink: (rel: string) => string }) {
-  const href = gardenLink(data.vault_path);
-  return (
-    <div className="detail-body">
-      <div className="muted" style={{ wordBreak: "break-all" }}>{data.vault_path ?? "—"}</div>
-      {href !== "#" && (
-        <a className="btn" href={href} target="_blank" rel="noreferrer" style={{ marginTop: 12, display: "inline-block" }}>
-          Open in garden ↗
-        </a>
-      )}
-    </div>
-  );
-}
-
-function DetailInteraction({ node }: { node: GNode }) {
-  const meta = node.metadata ?? {};
-  return (
-    <div className="detail-body">
-      <div className="detail-grid">
-        <div><span className="k">Type</span><span className="v">{meta.type ?? "—"}</span></div>
-        <div><span className="k">Date</span><span className="v">{node.label.replace("interaction ", "")}</span></div>
-      </div>
-      {meta.summary && <p>{meta.summary}</p>}
-    </div>
-  );
+    {error && <div className="graph-os-error">{error}</div>}
+    <div className="graph-os-stats"><span><strong>{stats.total_contacts ?? nodes.length}</strong> people</span><i /> <span><strong>{edges.length}</strong> connections</span><i /> <span><strong>{stats.interactions_this_week ?? 0}</strong> touches this week</span><i /> <span><strong>{Math.round((nodes.reduce((sum, n) => sum + (n.health_score ?? 0), 0) / Math.max(1, nodes.length)) * 100)}%</strong> avg health</span></div>
+    <svg ref={svgRef} className="graph-os-canvas" aria-label="Interactive relationship graph" />
+    {showLegend && <div className="graph-os-legend"><header><span>Circles</span><button onClick={() => setShowLegend(false)}>×</button></header>{CATEGORIES.map((category) => <button key={category} onClick={() => toggleCategory(category)} className={hidden.has(category) ? "hidden" : ""}><span style={{ background: CATEGORY_COLORS[category] }} />{CATEGORY_LABELS[category]}<em>{nodes.filter((n) => n.category === category).length}</em></button>)}<footer><span className="legend-health good" /> healthy <span className="legend-health warn" /> drifting <span className="legend-health bad" /> attention</footer></div>}
+    <div className="graph-os-count"><strong>{filtered.length}</strong> visible · scroll to zoom · drag to arrange</div>
+    {tooltip && <div className="graph-os-tooltip" style={{ left: tooltip.x + 18, top: tooltip.y + 18 }}><strong>{tooltip.person.name}</strong><span>{tooltip.person.company || CATEGORY_LABELS[tooltip.person.category ?? "NETWORK"]}</span><span style={{ color: health(tooltip.person.health_score).color }}>{health(tooltip.person.health_score).label} · {tooltip.connections} connection{tooltip.connections === 1 ? "" : "s"}</span>{tooltip.person.last_contacted && <span>Last touch {daysSince(tooltip.person.last_contacted)}d ago</span>}</div>}
+    {selected && <aside className="graph-os-inspector"><button className="inspector-close" onClick={() => { setSelected(null); setDetail(null); }}>×</button><div className="inspector-hero"><div className="inspector-avatar" style={{ background: `linear-gradient(135deg, ${CATEGORY_COLORS[selected.category ?? "NETWORK"]}, ${selectedHealth.color})` }}>{selected.name.slice(0, 1)}</div><div><h2>{selected.name}</h2><p>{selected.occupation || CATEGORY_LABELS[selected.category ?? "NETWORK"]}</p></div></div><div className="inspector-actions"><button onClick={focusSelected}>◎ Focus</button><a href="/people/">↗ Profile</a></div><div className="inspector-health"><div><strong style={{ color: selectedHealth.color }}>{Math.round((selected.health_score ?? 0) * 100)}%</strong><span>relationship health</span></div><div><strong>{selected.streak_weeks ?? 0}w</strong><span>current streak</span></div><div><strong>{selectedConnections.length}</strong><span>connections</span></div></div>{selected.company && <section><h3>Work</h3><p>{selected.company}{selected.occupation ? ` · ${selected.occupation}` : ""}</p></section>}{selected.email || selected.phone ? <section><h3>Contact</h3>{selected.email && <a href={`mailto:${selected.email}`}>✉ {selected.email}</a>}{selected.phone && <a href={`tel:${selected.phone}`}>☎ {selected.phone}</a>}</section> : null}{selected.birthday || selected.anniversary ? <section><h3>Dates</h3>{selected.birthday && <p>🎂 Birthday · {new Date(selected.birthday).toLocaleDateString(undefined, { month: "long", day: "numeric" })}</p>}{selected.anniversary && <p>♥ Anniversary · {new Date(selected.anniversary).toLocaleDateString(undefined, { month: "long", day: "numeric" })}</p>}</section> : null}{selected.profile_notes && <section><h3>Notes</h3><p className="preserve-lines">{selected.profile_notes}</p></section>}{detail?.recent_interactions?.length ? <section><h3>Recent interactions</h3>{detail.recent_interactions.slice(0, 5).map((interaction: any) => <div className="inspector-event" key={interaction.id}><strong>{interaction.type}</strong><span>{interaction.summary || "Interaction logged"}</span><small>{interaction.date ? new Date(interaction.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "recent"}</small></div>)}</section> : null}<a className="inspector-meeting" href="/people/">Open full relationship card →</a></aside>}
+  </div>;
 }

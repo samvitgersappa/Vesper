@@ -35,9 +35,12 @@ MAX_HOLD_DAYS = 10
 COST_TARGET_MIN_MULTIPLE = 3.0
 COST_TARGET_MAX_MULTIPLE = 4.0
 
-# Watchlist-funnel sizes.
+# Universe and watchlist-funnel sizes.
+UNIVERSE_SIZE = 500  # Never let CSV ordering decide which stocks are screened.
 SCREEN_TOP_N = 15  # factor-composite funnel fed to the LLM stage
 WATCHLIST_SIZE = 10  # candidates that survive the LLM gate for entry review
+MAX_SECTOR_CANDIDATES = 3  # keep news/LLM budget diversified across themes
+MIN_AVG_DAILY_VALUE = 50_000_000.0  # ₹5 crore 60-session traded-value floor
 
 # Sector indices on yfinance (Nifty sector indices) for Layer-2 momentum.
 SECTOR_TICKERS = {

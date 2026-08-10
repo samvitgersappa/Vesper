@@ -25,6 +25,7 @@ from backend.modules.db import session_factory
 from backend.events.catalog import PORTFOLIO_NAV_UPDATED
 from backend.modules.common import publish
 from backend.db import feature_store
+from backend.modules.finance.catalyst import UNIVERSE_SIZE
 
 logger = logging.getLogger("vesper.automation.finance")
 
@@ -69,13 +70,12 @@ def _yf():
     return yf
 
 
-async def fetch_equity(limit: int = 200, start: str = "2018-01-01") -> dict:
+async def fetch_equity(limit: int = UNIVERSE_SIZE, start: str = "2018-01-01") -> dict:
     """06:00 IST — fetch the Nifty universe from yfinance into equity_daily.
 
-    Downloads in chunks of `_DOWNLOAD_CHUNK` tickers so a single flaky bulk
-    request can't silently drop most of the universe (previously only the first
-    15 alphabetically-sorted symbols survived, which starved every downstream
-    screen). Degrades honestly (logged run, no data) when yfinance is down.
+    Downloads the full Nifty 500 universe in chunks so CSV ordering cannot
+    starve downstream screens with the first alphabetical symbols. Degrades
+    honestly (logged run, no data) when yfinance is down.
     """
     try:
         yf = _yf()

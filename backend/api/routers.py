@@ -53,7 +53,12 @@ from backend.modules.journal.logic import write_entry as journal_write_entry
 from backend.modules.knowledge.logic import knowledge_recall_everything
 from backend.modules.knowledge.logic import knowledge_search
 from backend.modules.relationship.logic import relationship_get_due_today
+from backend.modules.relationship.logic import relationship_get_meeting_prep
+from backend.modules.relationship.logic import relationship_graph
 from backend.modules.relationship.logic import relationship_get_stats
+from backend.modules.relationship.logic import relationship_create_person
+from backend.modules.relationship.logic import relationship_log_interaction
+from backend.modules.relationship.logic import relationship_draft_message
 from backend.modules.relationship.logic import relationship_person_detail
 from backend.modules.relationship.logic import relationship_search
 from backend.modules.relationship.logic import relationship_update_person
@@ -92,6 +97,19 @@ async def api_relationship_person(person_id: str):
     return await relationship_person_detail(person_id)
 
 
+@router.post("/relationship/person")
+async def api_relationship_create_person(payload: dict[str, Any] = Body(...)):
+    return await relationship_create_person(
+        name=str(payload.get("name", "")),
+        company=str(payload.get("company", "")),
+        occupation=str(payload.get("occupation", "")),
+        category=str(payload.get("category", "NETWORK")),
+        email=str(payload.get("email", "")),
+        phone=str(payload.get("phone", "")),
+        notes=str(payload.get("notes", "")),
+    )
+
+
 @router.patch("/relationship/person/{person_id}")
 async def api_relationship_update_person(person_id: str, payload: dict[str, Any] = Body(...)):
     field = str(payload.get("field", ""))
@@ -107,6 +125,36 @@ async def api_relationship_add_note(person_id: str, payload: dict[str, Any] = Bo
     return await relationship_add_note(person_id, content)
 
 
+@router.post("/relationship/person/{person_id}/interactions")
+async def api_relationship_log_interaction(person_id: str, payload: dict[str, Any] = Body(...)):
+    summary = str(payload.get("summary", "")).strip()
+    if not summary:
+        raise HTTPException(status_code=400, detail="Interaction summary is required")
+    return await relationship_log_interaction(
+        person_id=person_id,
+        type=str(payload.get("type", "message")),
+        summary=summary,
+        date=str(payload.get("date", "")),
+        sentiment=str(payload.get("sentiment", "")),
+        follow_up_needed=bool(payload.get("follow_up_needed", False)),
+        follow_up_note=str(payload.get("follow_up_note", "")),
+    )
+
+
+@router.get("/relationship/person/{person_id}/meeting-prep")
+async def api_relationship_meeting_prep(person_id: str):
+    return await relationship_get_meeting_prep(person_id)
+
+
+@router.post("/relationship/person/{person_id}/draft-message")
+async def api_relationship_draft_message(person_id: str, payload: dict[str, Any] = Body(...)):
+    return await relationship_draft_message(
+        person_id=person_id,
+        purpose=str(payload.get("purpose", "reconnect")),
+        context=str(payload.get("context", "")),
+    )
+
+
 @router.get("/relationship/due-today")
 async def api_relationship_due_today():
     return await relationship_get_due_today()
@@ -115,6 +163,11 @@ async def api_relationship_due_today():
 @router.get("/relationship/stats")
 async def api_relationship_stats():
     return await relationship_get_stats()
+
+
+@router.get("/relationship/graph")
+async def api_relationship_graph(limit: int = 200):
+    return await relationship_graph(limit)
 
 
 # ── Journal ───────────────────────────────────────────────────────────────

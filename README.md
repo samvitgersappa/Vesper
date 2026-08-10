@@ -27,6 +27,54 @@ holding its own business logic. Hermes contains no domain logic.
       └─────────────────────────────────────────────────────────────┘
 ```
 
+## Relationship Graph OS
+
+The `/graph/` route is the relationship-first intelligence workspace. It is
+modeled after the ProjectVesper graph experience, but uses Vesper's own REST
+and Postgres data path. The map is centered on `YOU`, groups contacts by
+category, encodes relationship health in node color, and supports search,
+visibility controls, zoom/reset, drag-to-arrange, hover context, and an
+inspector for contact details and recent interactions. `/people/` remains the
+editable contact-management view and links back to the map. People OS supports
+ProjectVesper-style board/list views, category filters, health signals, adding
+contacts, editing profiles, logging interactions, meeting preparation, and
+draft-only reconnect messages.
+
+All three relationship surfaces use the same relationship module logic exposed
+to Hermes: the graph calls `/api/relationship/graph`, People OS calls the
+search/detail/create/update endpoints, and contact actions call the interaction,
+meeting-prep, draft-message, notes, and due-today endpoints. No browser page
+maintains a separate relationship data model.
+
+### Frontend deployment
+
+The frontend is a static Next export. Build it before restarting the host Caddy
+process so the HTML and hashed `_next` assets are generated as one release:
+
+```bash
+cd frontend
+npm run build
+cd ..
+caddy validate --config .run/Caddyfile
+```
+
+Caddy must serve `frontend/out` and must not rewrite `/_next/static/*` to
+`index.html`; otherwise stale asset requests are returned as HTML and fail
+strict MIME checking. The API must be restarted with the project `.env` loaded
+so `/api/relationship/graph` can access Postgres.
+
+The shared frontend theme is intentionally dark-only across every route. It
+does not follow the operating system's light-mode preference, so dashboard,
+relationship, finance, journal, study, calendar, and brain surfaces remain
+visually consistent with Relationship Graph OS.
+
+IPO Radar uses Moneycontrol when available and falls back to the public
+Chittorgarh IPO calendar before showing the clearly labelled sample dataset.
+Missing price bands or lot sizes are never presented as confirmed values.
+Calendar OS requests an explicit month range and renders birthdays,
+interactions, reminders, life events, and exams in a navigable month grid plus
+day agenda.
+
 ## Open Source
 
 Vesper is open source under the [MIT License](LICENSE). See
@@ -167,6 +215,13 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 | `catalyst_llm` | 18:40 Mon–Fri | Capped DeepSeek V4 Flash catalyst analysis over the top of the funnel |
 | `catalyst_risk` | 18:50 Mon–Fri | Exits-only risk pass: ATR/trailing stops, rank, negative-catalyst, time |
 | `catalyst_paper_trade` | 19:00 Mon–Fri | Catalyst Swing entries (cost-gated) + NAV snapshot |
+
+The catalyst funnel screens the full Nifty-500 universe rather than the first
+alphabetical slice. Before news/LLM spend, it rejects stale or illiquid names
+using a 60-session history and ₹5 crore average daily traded-value floor. The
+funnel then guarantees sector breadth (maximum three candidates per sector),
+with factor score, stock score, and sector score used as deterministic tie
+breakers.
 
 Every finance job logs to `finance.job_runs` and degrades honestly (records a
 `degraded` run) instead of failing the worker or fabricating data. The catalyst

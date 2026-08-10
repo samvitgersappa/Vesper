@@ -20,10 +20,77 @@ from sqlalchemy import text
 
 from backend.db import feature_store
 from backend.modules.db import session_factory
-from backend.modules.finance.catalyst import SCREEN_TOP_N
+from backend.modules.finance.catalyst import MAX_SECTOR_CANDIDATES, MIN_AVG_DAILY_VALUE, SCREEN_TOP_N
 from backend.modules.finance.catalyst._util import record_run, sector_for_symbol
 
 logger = logging.getLogger("vesper.finance.catalyst.scores")
+
+
+def select_diversified_candidates(
+    rows: list[dict[str, Any]], limit: int, max_per_sector: int = MAX_SECTOR_CANDIDATES
+) -> list[dict[str, Any]]:
+    """Choose strong names without letting one sector monopolize the funnel."""
+    ranked = sorted(
+        rows,
+        key=lambda row: (
+            -(float(row.get("composite_score") or 0.0)),
+            -(float(row.get("stock_score") or 0.0)),
+            -(float(row.get("sector_score") or 0.0)),
+            str(row.get("symbol") or ""),
+        ),
+    )
+    selected: list[dict[str, Any]] = []
+    used: set[str] = set()
+    sector_counts: dict[str, int] = {}
+    # First pass guarantees one representative from each strong sector.
+    for row in ranked:
+        sector = str(row.get("sector") or "UNCLASSIFIED")
+        symbol = str(row.get("symbol") or "")
+        if not symbol or symbol in used or sector_counts.get(sector, 0):
+            continue
+        selected.append(row)
+        used.add(symbol)
+        sector_counts[sector] = 1
+        if len(selected) >= limit:
+            return selected
+    # Second pass restores score priority while enforcing concentration.
+    for row in ranked:
+        sector = str(row.get("sector") or "UNCLASSIFIED")
+        symbol = str(row.get("symbol") or "")
+        if not symbol or symbol in used or sector_counts.get(sector, 0) >= max_per_sector:
+            continue
+        selected.append(row)
+        used.add(symbol)
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _tradability_map() -> dict[str, dict[str, float]]:
+    """Recent traded value and history checks used before expensive analysis."""
+    try:
+        frame = feature_store.client.df(
+            """
+            SELECT Symbol, AVG(Close * Volume) AS avg_daily_value,
+                   COUNT(DISTINCT Date) AS sessions
+            FROM equity_daily
+            WHERE Date >= (SELECT MAX(Date) - INTERVAL 60 DAY FROM equity_daily)
+            GROUP BY Symbol
+            """
+        )
+    except Exception as exc:  # pragma: no cover - feature store may be offline
+        logger.warning("tradability check unavailable: %s", exc)
+        return {}
+    if frame is None or frame.empty:
+        return {}
+    return {
+        str(row.Symbol): {
+            "avg_daily_value": float(row.avg_daily_value or 0),
+            "sessions": float(row.sessions or 0),
+        }
+        for row in frame.itertuples()
+    }
 
 
 # ── Layer 1 — market ─────────────────────────────────────────────────────
@@ -134,12 +201,20 @@ async def screen(date: str | None = None) -> dict[str, Any]:
     market_score = await _market_layer()
     sector_scores = await _sector_layer(d)
     stock_scores = _stock_layer(factors)
+    tradability = _tradability_map()
 
     symbols = [str(s) for s in factors["Symbol"].tolist()]
     scored = []
     for sym in symbols:
         stock = stock_scores.get(sym)
         if stock is None:
+            continue
+        liquidity = tradability.get(sym)
+        if tradability and (
+            not liquidity
+            or liquidity["sessions"] < 40
+            or liquidity["avg_daily_value"] < MIN_AVG_DAILY_VALUE
+        ):
             continue
         sector = sector_for_symbol(sym)
         sector_score = sector_scores.get(sector, 0.5) if sector else 0.5
@@ -153,7 +228,14 @@ async def screen(date: str | None = None) -> dict[str, Any]:
             "composite_score": composite,
         })
 
-    scored.sort(key=lambda x: x["composite_score"], reverse=True)
+    scored.sort(
+        key=lambda x: (
+            -x["composite_score"],
+            -x["stock_score"],
+            -x["sector_score"],
+            x["symbol"],
+        )
+    )
     for i, s in enumerate(scored, start=1):
         s["rank"] = i
 
@@ -201,9 +283,9 @@ async def funnel_for_llm(date: str, limit: int | None = None) -> list[dict]:
                 "composite_score, rank FROM finance.catalyst_scores "
                 "WHERE date = :d ORDER BY composite_score DESC LIMIT :n"
             ),
-            {"d": date, "n": n},
+            {"d": date, "n": max(n * 4, n)},
         )).all()
-    return [dict(r._mapping) for r in rows]
+    return select_diversified_candidates([dict(r._mapping) for r in rows], n)
 
 
 async def _log_funnel(date: str, scored: list[dict]) -> None:

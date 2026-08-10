@@ -13,6 +13,7 @@ Every row maps to the web page's shape:
 from __future__ import annotations
 
 import json
+import html
 import logging
 import re
 import time
@@ -25,6 +26,7 @@ logger = logging.getLogger("vesper.ipo")
 
 # Moneycontrol IPO page — the `__NEXT_DATA__` JSON holds the live calendar.
 MONEYCONTROL_IPO_URL = "https://www.moneycontrol.com/ipo/"
+CHITTORGARH_IPO_URL = "https://www.chittorgarh.com/calendar/ipo-calendar/1/"
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -124,11 +126,76 @@ def _moneycontrol_rows() -> Optional[list[dict[str, Any]]]:
     return rows
 
 
+def _chittorgarh_rows() -> Optional[list[dict[str, Any]]]:
+    """Parse the public IPO calendar when Moneycontrol requires consent.
+
+    Chittorgarh publishes one dated event per issue (open/close/allotment). We
+    only promote facts present in that calendar; price, lot size, and listing
+    dates stay blank when the calendar does not publish them.
+    """
+    try:
+        resp = httpx.get(CHITTORGARH_IPO_URL, headers=_HEADERS, timeout=15, follow_redirects=True)
+        if resp.status_code != 200:
+            return None
+        links = re.findall(
+            r'href=["\']([^"\']*ipo_news[^"\']*)["\'][^>]*>(.*?)</a>',
+            resp.text,
+            re.S | re.I,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chittorgarh IPO fetch failed: %s", exc)
+        return None
+
+    today = date.today()
+    by_slug: dict[str, dict[str, Any]] = {}
+    for url, raw_title in links:
+        title = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(raw_title))).strip()
+        match = re.match(r"(.+?) IPO (Opens|Closes) on ([A-Za-z]+ \d{1,2}, \d{4})$", title, re.I)
+        if not match:
+            continue
+        name, event, date_text = match.groups()
+        try:
+            event_date = datetime.strptime(date_text, "%b %d, %Y").date().isoformat()
+        except ValueError:
+            continue
+        slug_match = re.search(r"/ipo_news/([^/]+)/", url)
+        slug = slug_match.group(1) if slug_match else re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        row = by_slug.setdefault(slug, {
+            "id": slug,
+            "name": name.strip(),
+            "symbol": slug.upper().replace("-IPO", "")[:12],
+            "exchange": "NSE/BSE",
+            "open_date": "",
+            "close_date": "",
+            "listing_date": "",
+            "price_band": "",
+            "lot_size": 0,
+            "status": "upcoming",
+            "note": "Calendar dates from Chittorgarh. Price band and lot size were not published in this feed.",
+            "source_url": url.split("#", 1)[0],
+        })
+        row["open_date" if event.lower() == "opens" else "close_date"] = event_date
+
+    rows = list(by_slug.values())
+    for row in rows:
+        close_date = date.fromisoformat(row["close_date"]) if row["close_date"] else None
+        open_date = date.fromisoformat(row["open_date"]) if row["open_date"] else None
+        if open_date and open_date <= today <= (close_date or open_date):
+            row["status"] = "open"
+        elif close_date and close_date < today:
+            row["status"] = "recent"
+        else:
+            row["status"] = "upcoming"
+    return rows or None
+
+
 def _live_or_fallback() -> tuple[list[dict[str, Any]], str]:
     """Return (rows, source). Caches the live payload for TTL seconds."""
     now = time.monotonic()
     if now - _cache["ts"] > _TTL_SECONDS:
         rows = _moneycontrol_rows()
+        if not rows:
+            rows = _chittorgarh_rows()
         if rows:
             _cache.update(ts=now, data=rows, ok=True)
         else:

@@ -404,8 +404,20 @@ async def relationship_graph(limit: int = 200) -> dict[str, Any]:
         node = {
             "id": p.id,
             "name": p.name,
+            "company": p.company,
+            "occupation": p.occupation,
             "category": _enum_value(p.category),
             "health_score": round(calculate_health_score(p), 2),
+            "last_contacted": p.last_contacted.isoformat() if p.last_contacted else None,
+            "birthday": p.birthday.date().isoformat() if p.birthday else None,
+            "anniversary": p.anniversary.date().isoformat() if p.anniversary else None,
+            "contact_frequency_days": effective_frequency(p),
+            "streak_weeks": p.streak_weeks,
+            "email": p.email,
+            "phone": p.phone,
+            "profile_notes": p.profile_notes,
+            "topics_of_interest": p.topics_of_interest or [],
+            "introduced_by_id": getattr(p, "introduced_by_id", None),
             "community_id": communities.get(p.id),
             "betweenness": round(betweenness.get(p.id, 0.0), 4),
         }
@@ -416,6 +428,7 @@ async def relationship_graph(limit: int = 200) -> dict[str, Any]:
         if r.person_a_id not in by_id or r.person_b_id not in by_id:
             continue
         edges.append({
+            "id": r.id,
             "person_a_id": r.person_a_id,
             "person_b_id": r.person_b_id,
             "strength": _enum_value(r.strength),
