@@ -65,6 +65,16 @@ def test_person_context_and_cluster_name():
     assert derived_cluster_name("FAMILY", None) == "Family"
 
 
+def test_shared_office_sentence_labels_each_named_person_as_colleague():
+    from backend.modules.relationship.logic import extract_person_context, extract_person_mentions
+
+    text = "Grace and Kian were both in the office with me today."
+    names = extract_person_mentions(text, ["Grace", "Kian"])
+    assert names == ["Grace", "Kian"]
+    assert extract_person_context(text, "Grace")["category"] == "COLLEAGUES"
+    assert extract_person_context(text, "Kian")["category"] == "COLLEAGUES"
+
+
 def test_compute_analytics_pagerank_and_clustering():
     from backend.modules.graph.logic import compute_analytics
 

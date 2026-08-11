@@ -176,6 +176,18 @@ async def api_journal_entry(date: str = ""):
     return await journal_read_entry(date)
 
 
+@router.post("/journal/entry")
+async def api_journal_write_entry(payload: dict[str, Any] = Body(...)):
+    return await journal_write_entry(
+        text=str(payload.get("text", "")),
+        mood=str(payload.get("mood", "")),
+        date=str(payload.get("date", "")),
+        source=str(payload.get("source", "api")),
+        category=str(payload.get("category", "GENERAL")),
+        tags=payload.get("tags"),
+    )
+
+
 @router.get("/journal/streak")
 async def api_journal_streak():
     return await journal_get_mood_streak()

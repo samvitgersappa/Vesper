@@ -127,7 +127,7 @@ export default function Graph() {
       .attr("stroke-width", (e: any) => e.isCenterLink ? 1 : 1.3 + (e.weight ?? 0.6) * 1.5);
     const group = root.append("g").selectAll("g.node").data(simNodes).join("g").attr("class", "node").style("cursor", "pointer");
     group.append("circle").attr("class", "halo").attr("r", (d) => d.isCenter ? 32 : 0).attr("fill", "rgba(201,121,63,.18)");
-    group.append("path").attr("class", "node-shape").attr("fill", (d) => d.isCenter ? "#818cf8" : health(d.health_score).color).attr("stroke", (d) => d.isCenter ? "#c4b5fd" : CATEGORY_COLORS[d.category ?? "NETWORK"]).attr("stroke-width", 1.5);
+     group.append("path").attr("class", "node-shape").attr("fill", (d) => d.isCenter ? "#818cf8" : CATEGORY_COLORS[d.category ?? "NETWORK"]).attr("stroke", (d) => d.isCenter ? "#c4b5fd" : health(d.health_score).color).attr("stroke-width", 1.5);
     group.append("text").attr("class", "nlabel").attr("text-anchor", "middle").attr("y", (d) => d.isCenter ? 48 : 24).attr("fill", "rgba(255,255,255,.88)").attr("font-size", (d) => d.isCenter ? 12 : 11).attr("font-weight", (d) => d.isCenter ? 700 : 500).text((d) => d.name);
     const active = (id: string | null) => {
       const ids = id ? new Set([id, ...(adjacent.get(id) ?? [])]) : null;
