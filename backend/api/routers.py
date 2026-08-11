@@ -61,6 +61,7 @@ from backend.modules.relationship.logic import relationship_log_interaction
 from backend.modules.relationship.logic import relationship_draft_message
 from backend.modules.relationship.logic import relationship_person_detail
 from backend.modules.relationship.logic import relationship_search
+from backend.modules.relationship.logic import relationship_refresh_people
 from backend.modules.relationship.logic import relationship_update_person
 from backend.modules.relationship.logic import relationship_add_note
 from backend.modules.study.logic import list_tests as study_list_tests
@@ -168,6 +169,11 @@ async def api_relationship_stats():
 @router.get("/relationship/graph")
 async def api_relationship_graph(limit: int = 200):
     return await relationship_graph(limit)
+
+
+@router.post("/relationship/refresh")
+async def api_relationship_refresh():
+    return await relationship_refresh_people()
 
 
 # ── Journal ───────────────────────────────────────────────────────────────

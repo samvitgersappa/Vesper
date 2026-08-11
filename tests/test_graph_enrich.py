@@ -75,6 +75,15 @@ def test_shared_office_sentence_labels_each_named_person_as_colleague():
     assert extract_person_context(text, "Kian")["category"] == "COLLEAGUES"
 
 
+def test_labeled_team_list_extracts_every_contact():
+    from backend.modules.relationship.logic import extract_person_mentions
+
+    text = "Team (all SE1 new hires): Sidhant, Shreenath, Apoorva, Diksha, Kavya. Devashree = Senior SE. Prakash = team manager."
+    assert extract_person_mentions(text) == [
+        "Sidhant", "Shreenath", "Apoorva", "Diksha", "Kavya", "Devashree", "Prakash",
+    ]
+
+
 def test_compute_analytics_pagerank_and_clustering():
     from backend.modules.graph.logic import compute_analytics
 

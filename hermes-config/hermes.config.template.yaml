@@ -57,10 +57,11 @@ terminal:
   timeout: 180
 
 compression:
+  # Credit-safe: compact only when context is large, never on idle.
   enabled: true
-  threshold: 0.5
+  threshold: 0.7
   target_ratio: 0.2
-  protect_last_n: 20
+  protect_last_n: 12
   protect_first_n: 3
 
 memory:
@@ -68,8 +69,8 @@ memory:
   user_profile_enabled: true
   memory_char_limit: 2200
   user_char_limit: 1375
-  flush_min_turns: 6
-  nudge_interval: 10
+  flush_min_turns: 15
+  nudge_interval: 20
 
 delegation:
   max_iterations: 50

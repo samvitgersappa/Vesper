@@ -61,6 +61,18 @@ def test_enrich_markdown_is_idempotent():
     assert once == twice
 
 
+def test_enrich_moves_late_captures_under_journal_additions():
+    note = fmt.render_new_note(D) + "\nA late capture.\n\n## Q8 Connections\n\nMet Divya.\n"
+    out, changed = fmt.enrich_markdown(note, D)
+    assert changed is True
+    assert "## Journal Additions" in out
+    assert "### Q8 Connections" in out
+    assert out.index("## Journal Additions") < out.index("A late capture.")
+    again, changed_again = fmt.enrich_markdown(out, D)
+    assert changed_again is False
+    assert again == out
+
+
 def test_enrich_preserves_existing_mood_and_tags():
     flat = (
         "---\nmood: anxious\ntags: [work, deep-dive]\n---\n\n"

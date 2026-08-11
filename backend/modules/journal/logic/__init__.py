@@ -318,7 +318,11 @@ async def write_entry(
     if not body:
         return {"ok": False, "message": "empty journal text"}
     append = d == _today()
-    file_res = write_entry_file(d, _build_content(d, body, append), append=append)
+    file_res = write_entry_file(
+        d,
+        _build_content(d, body, append and entry_path(d).exists()),
+        append=append,
+    )
     if not file_res["ok"]:
         return file_res
     meta = await _upsert_entry_metadata(
@@ -336,6 +340,7 @@ async def write_entry(
         body,
         source=file_res.get("path") or f"journal/{d.isoformat()}",
     )
+    formatting = await enrich_entry(d.isoformat())
     publish(JOURNAL_CREATED, {
         "entry_id": meta.get("entry_id"),
         "date": d.isoformat(),
@@ -360,6 +365,7 @@ async def write_entry(
         "word_count": file_res["word_count"],
         "people_created": mentions.get("created", []),
         "people_matched": mentions.get("matched", []),
+        "formatted": formatting.get("enriched", False),
         "metadata": meta,
     }
 
@@ -408,6 +414,11 @@ async def enrich_entry(date: str = "") -> dict[str, Any]:
             "message": res["message"],
             "enriched": False,
         }
+    # A completed questionnaire can contain several answers and named people;
+    # re-ingest the whole note so late Q8 additions reach People OS and graph.
+    from backend.modules.relationship.logic import relationship_ingest_mentions
+
+    await relationship_ingest_mentions(res["content"], source=res["path"])
     content, changed = enrich_markdown(res["content"], d, vault_root())
     if not changed:
         return {

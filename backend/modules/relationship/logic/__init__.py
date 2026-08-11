@@ -79,6 +79,13 @@ _MENTION_LIST_RE = re.compile(
     r"\b(?:for|with|team:)\s+([^.!?\n]+)",
     re.IGNORECASE,
 )
+_MENTION_LABELED_LIST_RE = re.compile(
+    r"\b(?:team|colleagues|friends|family)\b[^:\n]{0,100}:\s*([^.!?\n]+)",
+    re.IGNORECASE,
+)
+_MENTION_EQUALS_RE = re.compile(
+    r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})?)\s*=",
+)
 _MENTION_NAME_RE = re.compile(r"\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})?\b")
 _CONTEXT_COMPANY_RE = re.compile(
     r"\b(?:at|from|works?\s+(?:at|for)|joined)\s+"
@@ -92,7 +99,7 @@ _MENTION_STOPWORDS = {
     "August", "September", "October", "November", "December", "January", "February",
     "March", "April", "May", "June", "July", "GitHub", "Jira", "Contabo", "Power",
     "BI", "DataHub", "Project", "Product", "Owner", "Sprint", "Master", "Scrum",
-    "Manager", "Team", "Colleagues", "Family", "Friends",
+    "Manager", "Senior", "SE", "Team", "Colleagues", "Family", "Friends",
 }
 
 
@@ -130,6 +137,11 @@ def extract_person_mentions(text: str, known_names: Optional[list[str]] = None) 
     for match in _MENTION_LIST_RE.finditer(content):
         for candidate in _MENTION_NAME_RE.findall(match.group(1)):
             add(candidate)
+    for match in _MENTION_LABELED_LIST_RE.finditer(content):
+        for candidate in _MENTION_NAME_RE.findall(match.group(1)):
+            add(candidate)
+    for match in _MENTION_EQUALS_RE.finditer(content):
+        add(match.group(1))
     lower = content.casefold()
     for existing in known_names or []:
         clean = str(existing).strip()
@@ -207,17 +219,24 @@ def _ensure_people_note(person: Person) -> str | None:
     if not slug:
         return None
     path = Path(vault) / "05 People" / f"{slug}.md"
+    managed = (
+        f"# {person.name}\n\n"
+        f"Relationship: {derived_cluster_name(_enum_value(person.category), person.company)}\n"
+        f"Company: {person.company or 'Unknown'}\n"
+        f"Role: {person.occupation or 'Unknown'}\n"
+    )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            path.write_text(
-                f"# {person.name}\n\n"
-                f"Relationship: {derived_cluster_name(_enum_value(person.category), person.company)}\n"
-                f"Company: {person.company or 'Unknown'}\n"
-                f"Role: {person.occupation or 'Unknown'}\n",
-                encoding="utf-8",
-            )
+            path.write_text(managed, encoding="utf-8")
             return str(path)
+        existing = path.read_text(encoding="utf-8", errors="replace")
+        if existing.startswith(f"# {person.name}\n") and all(
+            marker in existing for marker in ("Relationship:", "Company:", "Role:")
+        ):
+            if existing != managed:
+                path.write_text(managed, encoding="utf-8")
+                return str(path)
     except OSError:
         return None
     return None
@@ -310,6 +329,44 @@ async def relationship_ingest_mentions(
             "source": source,
         })
     return {"created": created, "matched": matched, "names": names}
+
+
+async def relationship_refresh_people() -> dict[str, Any]:
+    """Reconcile all journal mentions and People notes after questionnaire runs."""
+    vault = os.environ.get("HERMES_VAULT_PATH", "").strip()
+    scanned = 0
+    if vault:
+        root = Path(vault) / "00 Journal"
+        for path in sorted(root.rglob("*.md")) if root.exists() else []:
+            try:
+                await relationship_ingest_mentions(path.read_text(encoding="utf-8", errors="replace"), source=str(path))
+                scanned += 1
+            except OSError:
+                continue
+    async with session_factory()() as db:
+        people = (await db.execute(select(Person).where(Person.is_archived == False))).scalars().all()  # noqa: E712
+        notes = 0
+        expected = {
+            re.sub(r"[^a-z0-9]+", "-", person.name.casefold()).strip("-")
+            for person in people
+        }
+        for person in people:
+            if _ensure_people_note(person):
+                notes += 1
+        people_dir = Path(vault) / "05 People" if vault else None
+        removed = 0
+        if people_dir and people_dir.exists():
+            for path in people_dir.glob("*.md"):
+                if path.stem in expected:
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                    if text.startswith("# ") and all(marker in text for marker in ("Relationship:", "Company:", "Role:")):
+                        path.unlink()
+                        removed += 1
+                except OSError:
+                    continue
+    return {"ok": True, "journals_scanned": scanned, "people": len(people), "notes_updated": notes, "stale_notes_removed": removed}
 
 
 def _enum_value(x: Any) -> Any:

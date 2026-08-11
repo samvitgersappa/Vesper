@@ -204,6 +204,42 @@ def _person_and_topic_stems(vault_root: Path) -> dict[str, list[Path]]:
     return index
 
 
+def _normalize_additions(content: str) -> tuple[str, bool]:
+    """Keep late captures under one heading instead of after the document."""
+    tomorrow = re.search(r"^##\s+Tomorrow\s*$", content, re.MULTILINE)
+    if not tomorrow:
+        return content, False
+    additions = re.search(r"^##\s+Journal Additions\s*$", content[tomorrow.end():], re.MULTILINE)
+    if additions:
+        additions_idx = tomorrow.end() + additions.start()
+        between = content[tomorrow.end():additions_idx].strip()
+        lines = between.splitlines()
+        keep: list[str] = []
+        move: list[str] = []
+        for line in lines:
+            if not move and line.strip().lower().startswith("no priorities"):
+                keep.append(line)
+            else:
+                move.append(line)
+        if not move:
+            return content, False
+        moved = "\n".join(move).strip() + "\n\n"
+        header_end = content.find("\n", additions_idx) + 1
+        rebuilt = content[:tomorrow.end()].rstrip() + "\n\n" + "\n".join(keep).strip() + "\n\n" + content[additions_idx:header_end] + "\n" + moved + content[header_end:]
+        return rebuilt, True
+    tail_match = re.search(r"^##\s+", content[tomorrow.end():], re.MULTILINE)
+    if tail_match is None:
+        return content, False
+    split = tomorrow.end() + tail_match.start()
+    tail = content[split:].strip()
+    if not tail:
+        return content, False
+    # Preserve questionnaire subheadings as children of the additions block.
+    tail = re.sub(r"^##\s+", "### ", tail, flags=re.MULTILINE)
+    normalized = content[:split].rstrip() + "\n\n## Journal Additions\n\n" + tail + "\n"
+    return normalized, True
+
+
 def enrich_markdown(content: str, d: date, vault_root: Optional[Path] = None) -> tuple[str, bool]:
     """Idempotently upgrade a journal note for Obsidian/Quartz graph use.
 
@@ -219,6 +255,8 @@ def enrich_markdown(content: str, d: date, vault_root: Optional[Path] = None) ->
     if not content:
         return content, False
     changed = False
+    content, additions_changed = _normalize_additions(content)
+    changed = additions_changed
     fm = parse_frontmatter(content)
 
     # 1. Ensure frontmatter.

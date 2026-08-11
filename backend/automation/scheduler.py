@@ -59,6 +59,7 @@ JOB_SCHEDULE = {
     "index_vault_semantic": {"trigger": "cron", "hour": 3, "minute": 15},
     "journal_questionnaire_deadline": {"trigger": "cron", "hour": 23, "minute": 55},
     "vault_backup_publish": {"trigger": "cron", "hour": 0, "minute": 15},
+    "people_vault_refresh": {"trigger": "cron", "hour": 0, "minute": 10},
     "hermes_mirror": {"trigger": "interval", "minutes": 5},
     "notification_sweep_morning": {"trigger": "cron", "hour": 8, "minute": 0},
     "notification_sweep_evening": {"trigger": "cron", "hour": 18, "minute": 5},
@@ -113,6 +114,7 @@ def _register_all() -> None:
     from backend.automation.jobs.journal_deadline import journal_questionnaire_deadline
     from backend.automation.jobs.vault_publish import vault_backup_publish
     from backend.automation.jobs.hermes_mirror import hermes_mirror
+    from backend.modules.relationship.logic import relationship_refresh_people
     from backend.notification import triage, send_telegram
 
     jobs = {
@@ -129,6 +131,7 @@ def _register_all() -> None:
         "index_vault_semantic": index_vault_semantic,
         "journal_questionnaire_deadline": journal_questionnaire_deadline,
         "hermes_mirror": hermes_mirror,
+        "people_vault_refresh": relationship_refresh_people,
     }
     jobs.update(catalyst_jobs)
     for name, fn in jobs.items():
@@ -206,6 +209,25 @@ def _start_event_subscribers() -> None:
 
     threading.Thread(target=_graph_sub, daemon=True).start()
     threading.Thread(target=_notify_sub, daemon=True).start()
+
+    def _people_refresh_sub():
+        import asyncio
+        from backend.events.bus import bus
+        from backend.modules.relationship.logic import relationship_refresh_people
+
+        def _refresh(event: str, payload: dict) -> None:
+            try:
+                result = asyncio.run(relationship_refresh_people())
+                logger.info("post-questionnaire People refresh: %s", result)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("post-questionnaire People refresh failed: %s", exc)
+
+        try:
+            bus.subscribe("DailyJournalCompleted", _refresh)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("People refresh subscriber stopped: %s", exc)
+
+    threading.Thread(target=_people_refresh_sub, daemon=True).start()
 
 
 def run() -> None:
