@@ -330,6 +330,12 @@ async def write_entry(
         tags=tags,
         word_count=file_res["word_count"],
     )
+    from backend.modules.relationship.logic import relationship_ingest_mentions
+
+    mentions = await relationship_ingest_mentions(
+        body,
+        source=file_res.get("path") or f"journal/{d.isoformat()}",
+    )
     publish(JOURNAL_CREATED, {
         "entry_id": meta.get("entry_id"),
         "date": d.isoformat(),
@@ -352,6 +358,8 @@ async def write_entry(
         "appended": file_res["appended"],
         "mood": (mood or "").strip(),
         "word_count": file_res["word_count"],
+        "people_created": mentions.get("created", []),
+        "people_matched": mentions.get("matched", []),
         "metadata": meta,
     }
 

@@ -68,7 +68,9 @@ async def _prune_stale() -> None:
         nodes = (await db.execute(select(GraphNode))).scalars().all()
         keep: set[tuple[str, str]] = {
             ("person", pid)
-            for pid in (await db.execute(select(Person.id))).scalars().all()
+            for pid in (
+                await db.execute(select(Person.id).where(Person.is_archived.is_(False)))
+            ).scalars().all()
         }
         keep.update(
             ("interaction", iid)

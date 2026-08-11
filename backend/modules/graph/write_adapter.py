@@ -318,6 +318,7 @@ async def _project_note(
     root: Path,
     rel: str,
     content: str,
+    mentioned_names: list[str] | None = None,
 ) -> GraphNode:
     """Upsert a note/topic/area projection for one vault file (and its links).
 
@@ -362,6 +363,25 @@ async def _project_note(
     for tag in _extract_tags(content):
         topic = await _upsert_node(db, "topic", tag.casefold(), tag, {})
         await _upsert_edge(db, node, topic, "tagged_with", weight=1.0)
+
+    # Journal/knowledge mention ingestion promotes names to relationship.Person
+    # rows; connect the source note to those same person nodes in the universal
+    # graph so People OS, the relationship graph, and the vault share identity.
+    if mentioned_names:
+        people = (await db.execute(select(Person))).scalars().all()
+        by_name = {p.name.casefold(): p for p in people}
+        for name in mentioned_names:
+            person = by_name.get(name.casefold())
+            if person is None:
+                continue
+            person_node = await _upsert_node(
+                db,
+                "person",
+                person.id,
+                person.name,
+                {"category": person.category, "source": "relationship.person"},
+            )
+            await _upsert_edge(db, node, person_node, "mentioned_in", weight=1.0)
 
     # journal chronology spine
     day = _date_from_journal_path(rel)
@@ -411,8 +431,12 @@ async def _on_knowledge(payload: dict) -> None:
                 content = ""
         if not content:
             content = payload.get("content") or ""
+        from backend.modules.relationship.logic import relationship_ingest_mentions
+
+        known_people = [Path(rel).stem] if rel.startswith(f"{_PEOPLE_DIR}/") else []
+        mentions = await relationship_ingest_mentions(content, source=rel, known_people=known_people)
         async with session_factory()() as db:
-            await _project_note(db, root, rel, content)
+            await _project_note(db, root, rel, content, mentions.get("names", []))
             await db.commit()
     except Exception as exc:  # pragma: no cover
         logger.warning("graph knowledge adapter failed: %s", exc)
@@ -439,8 +463,11 @@ async def _on_diary(date_iso: str) -> None:
     except OSError:
         content = ""
     try:
+        from backend.modules.relationship.logic import relationship_ingest_mentions
+
+        mentions = await relationship_ingest_mentions(content, source=rel)
         async with session_factory()() as db:
-            await _project_note(db, root, rel, content)
+            await _project_note(db, root, rel, content, mentions.get("names", []))
             await db.commit()
     except Exception as exc:  # pragma: no cover
         logger.warning("graph journal adapter failed: %s", exc)

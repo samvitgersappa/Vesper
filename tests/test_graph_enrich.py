@@ -35,6 +35,27 @@ def test_date_from_journal_path():
     assert _date_from_journal_path("03 Knowledge/foo.md") is None
 
 
+def test_person_mentions_prefer_explicit_links_and_conservative_prose():
+    from backend.modules.relationship.logic import extract_person_mentions
+
+    text = "Met Priya Shah about the launch. [[Rohan Mehta|Rohan]] joined later. The Project update was useful."
+    assert extract_person_mentions(text) == ["Rohan Mehta", "Priya Shah"]
+
+
+def test_person_mentions_match_existing_names_without_creating_projects():
+    from backend.modules.relationship.logic import extract_person_mentions
+
+    text = "The Project update was useful and Maya Patel helped with next steps."
+    assert extract_person_mentions(text, ["Maya Patel", "Project"]) == ["Maya Patel"]
+
+
+def test_person_mentions_extract_birthday_and_team_lists():
+    from backend.modules.relationship.logic import extract_person_mentions
+
+    text = "Look up birthdays for Sriram, Jynanadeep, Vishnu, Divya, and colleagues. Connected with team: Kian and Grace."
+    assert extract_person_mentions(text) == ["Sriram", "Jynanadeep", "Vishnu", "Divya", "Kian", "Grace"]
+
+
 def test_compute_analytics_pagerank_and_clustering():
     from backend.modules.graph.logic import compute_analytics
 

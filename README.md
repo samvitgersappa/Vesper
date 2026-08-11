@@ -75,6 +75,14 @@ Calendar OS requests an explicit month range and renders birthdays,
 interactions, reminders, life events, and exams in a navigable month grid plus
 day agenda.
 
+Journal/questionnaire writes also run deterministic people ingestion. Explicit
+`[[person]]` links, People-vault note names, and conservative prose patterns
+such as “met Priya Shah” or “birthdays for Sriram, Vishnu” create or match a
+`relationship.persons` contact with provenance notes. The graph adapter then
+links the journal/knowledge note to that same person node, so future mentions
+appear in People OS, the relationship graph, and the universal intelligence
+graph without requiring a second manual capture.
+
 ## Open Source
 
 Vesper is open source under the [MIT License](LICENSE). See

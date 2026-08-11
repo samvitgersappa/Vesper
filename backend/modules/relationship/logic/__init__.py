@@ -68,9 +68,126 @@ GROUP_CONTACT_LABELS = {
     "brothers", "sisters", "children", "kids", "relatives", "colleagues",
 }
 
+_MENTION_WIKILINK_RE = re.compile(r"\[\[([^\[\]|#]+)(?:[|#][^\]]*)?\]\]")
+_MENTION_PHRASE_RE = re.compile(
+    r"\b(?i:met|spoke with|talked to|called|messaged|emailed|visited|from|with)\s+"
+    r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})"
+)
+_MENTION_LIST_RE = re.compile(
+    r"\b(?:for|with|team:)\s+([^.!?\n]+)",
+    re.IGNORECASE,
+)
+_MENTION_NAME_RE = re.compile(r"\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})?\b")
+_MENTION_STOPWORDS = {
+    "I", "We", "They", "He", "She", "The", "This", "That", "Today", "Tomorrow",
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Morning", "Afternoon", "Evening", "Night", "Work", "Home", "Office",
+    "August", "September", "October", "November", "December", "January", "February",
+    "March", "April", "May", "June", "July", "GitHub", "Jira", "Contabo", "Power",
+    "BI", "DataHub", "Project", "Product", "Owner", "Sprint", "Master", "Scrum",
+    "Manager", "Team", "Colleagues", "Family", "Friends",
+}
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def extract_person_mentions(text: str, known_names: Optional[list[str]] = None) -> list[str]:
+    """Extract likely person names from explicit links and journal prose.
+
+    Explicit ``[[wikilinks]]`` are highest confidence. For unlinked prose we
+    only accept names after common person-oriented verbs/prepositions, avoiding
+    broad capitalized-word NER that would turn projects and places into people.
+    Existing names are also matched case-insensitively so later mentions keep
+    reinforcing the same contact.
+    """
+    content = text or ""
+    found: list[str] = []
+
+    def add(raw: str) -> None:
+        name = re.sub(r"\s+", " ", raw.strip(" .,:;!?()[]{}\"'"))
+        if not name or len(name) > 80 or name in _MENTION_STOPWORDS:
+            return
+        if any(part in _MENTION_STOPWORDS for part in name.split()):
+            return
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name) or "/" in name:
+            return
+        if name.casefold() not in {item.casefold() for item in found}:
+            found.append(name)
+
+    for raw in _MENTION_WIKILINK_RE.findall(content):
+        add(raw)
+    for match in _MENTION_PHRASE_RE.finditer(content):
+        add(match.group(1))
+    for match in _MENTION_LIST_RE.finditer(content):
+        for candidate in _MENTION_NAME_RE.findall(match.group(1)):
+            add(candidate)
+    lower = content.casefold()
+    for existing in known_names or []:
+        clean = str(existing).strip()
+        if len(clean) >= 3 and re.search(rf"(?<!\w){re.escape(clean.casefold())}(?!\w)", lower):
+            add(clean)
+    return found
+
+
+async def relationship_ingest_mentions(
+    text: str,
+    source: str = "journal",
+    known_people: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Promote journal/knowledge mentions into relationship contacts.
+
+    Existing contacts are never duplicated. New contacts are intentionally
+    created as ``NETWORK`` with a provenance note, giving the user a reviewable
+    People OS card instead of silently losing the mention.
+    """
+    async with session_factory()() as db:
+        existing = (await db.execute(select(Person))).scalars().all()
+        known = [p.name for p in existing]
+        names = extract_person_mentions(text, known)
+        # A filename under the People vault is an explicit, high-confidence
+        # contact identity even when the note body is still only a stub.
+        for known_person in known_people or []:
+            clean = str(known_person).strip()
+            if clean and clean.casefold() not in {name.casefold() for name in names}:
+                names.append(clean)
+        by_name = {p.name.casefold(): p for p in existing}
+        created: list[dict[str, str]] = []
+        matched: list[str] = []
+        for name in names:
+            person = by_name.get(name.casefold())
+            if person is None and len(name.split()) == 1:
+                aliases = [p for p in existing if p.name.casefold().startswith(f"{name.casefold()} ")]
+                if len(aliases) == 1:
+                    person = aliases[0]
+            if person is not None:
+                matched.append(person.name)
+                continue
+            normalized = re.sub(r"[^a-z0-9]+", " ", name.casefold()).strip()
+            if normalized in GROUP_CONTACT_LABELS:
+                continue
+            person = Person(name=name, category="NETWORK", health_score=1.0)
+            db.add(person)
+            await db.flush()
+            db.add(Note(
+                person_id=person.id,
+                content=f"Mentioned in {source}. Review and enrich this contact profile.",
+            ))
+            by_name[name.casefold()] = person
+            created.append({"id": person.id, "name": name})
+        if created:
+            await db.commit()
+        else:
+            await db.rollback()
+    for person in created:
+        publish(PERSON_UPDATED, {
+            "person_id": person["id"],
+            "name": person["name"],
+            "action": "mention_ingest",
+            "source": source,
+        })
+    return {"created": created, "matched": matched, "names": names}
 
 
 def _enum_value(x: Any) -> Any:
