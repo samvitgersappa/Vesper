@@ -134,6 +134,10 @@ async def _on_person(person_id: str) -> None:
                     "health_score": person.health_score,
                     "company": person.company,
                     "occupation": person.occupation,
+                    "cluster_name": (
+                        person.company
+                        or (person.category.value if hasattr(person.category, "value") else person.category)
+                    ),
                 },
             )
             # Link the person profile to their People-note in the vault, if any,

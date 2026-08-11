@@ -56,6 +56,15 @@ def test_person_mentions_extract_birthday_and_team_lists():
     assert extract_person_mentions(text) == ["Sriram", "Jynanadeep", "Vishnu", "Divya", "Kian", "Grace"]
 
 
+def test_person_context_and_cluster_name():
+    from backend.modules.relationship.logic import extract_person_context, derived_cluster_name
+
+    context = extract_person_context("Met Priya Shah, my colleague at Dell (data engineer).", "Priya Shah")
+    assert context == {"category": "COLLEAGUES", "company": "Dell", "occupation": "data engineer"}
+    assert derived_cluster_name(context["category"], context["company"]) == "Dell"
+    assert derived_cluster_name("FAMILY", None) == "Family"
+
+
 def test_compute_analytics_pagerank_and_clustering():
     from backend.modules.graph.logic import compute_analytics
 

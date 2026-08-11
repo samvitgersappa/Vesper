@@ -112,6 +112,14 @@ Never batch — every answer is written the moment it arrives:
   the individual names before creating contacts. For each named person, search
   first, call `relationship.create_person` only when no match exists, then call
   `relationship.create_interaction` with today's date and the connection context.
+  After each named person is resolved, inspect the answer for missing context.
+  If relationship category (family, friend, colleague, cousin, or other) is
+  unclear, ask one concise follow-up such as "How do you know Priya?". If a
+  colleague/friend is named without an organization or shared group, ask one
+  more targeted follow-up such as "Which company or circle should I place Priya
+  in?". Apply only user-provided answers to the person profile; never infer a
+  sensitive relationship from a name alone. These follow-ups are optional when
+  the answer already supplies the context and are capped at two per person.
   Never claim a contact was saved without a successful tool result.
 - Q9 → append the answer to the journal entry as the Tomorrow section; do not
   leave it only in the chat transcript.

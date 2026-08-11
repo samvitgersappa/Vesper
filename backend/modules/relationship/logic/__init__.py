@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - graph community tool degrades graceful
 import dateutil.parser
 
 from backend.db.postgres.schemas.relationship.models import (
-    Person, Interaction, Relationship, Reminder, Note,
+    Person, Interaction, Relationship, Reminder, Note, Cluster,
     LifeEvent, GiftIdea, Tag, PersonTag,
 )
 from backend.modules.common import publish
@@ -78,6 +78,11 @@ _MENTION_LIST_RE = re.compile(
     re.IGNORECASE,
 )
 _MENTION_NAME_RE = re.compile(r"\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})?\b")
+_CONTEXT_COMPANY_RE = re.compile(
+    r"\b(?:at|from|works?\s+(?:at|for)|joined)\s+"
+    r"([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,2})"
+)
+_CONTEXT_ROLE_RE = re.compile(r"\(([^)\n]{3,80})\)|\b(?:as|is)\s+(?:a|an)?\s*([A-Z][A-Za-z /-]{2,60})")
 _MENTION_STOPWORDS = {
     "I", "We", "They", "He", "She", "The", "This", "That", "Today", "Tomorrow",
     "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
@@ -131,6 +136,66 @@ def extract_person_mentions(text: str, known_names: Optional[list[str]] = None) 
     return found
 
 
+def extract_person_context(text: str, name: str) -> dict[str, str]:
+    """Infer only high-confidence relationship context surrounding a name."""
+    content = text or ""
+    context = " ".join(
+        sentence for sentence in re.split(r"(?<=[.!?])\s+|\n+", content)
+        if name.casefold() in sentence.casefold()
+    )
+    lower = context.casefold()
+    category = ""
+    if re.search(r"\b(mom|mother|dad|father|sister|brother|parent|family|grandparent|aunt|uncle)\b", lower):
+        category = "FAMILY"
+    elif re.search(r"\b(cousin|cousins)\b", lower):
+        category = "COUSINS"
+    elif re.search(r"\b(friend|friends|buddy|close to)\b", lower):
+        category = "FRIENDS"
+    elif re.search(r"\b(colleague|colleagues|coworker|office|team|manager|work)\b", lower):
+        category = "COLLEAGUES"
+    company = ""
+    for match in _CONTEXT_COMPANY_RE.finditer(context):
+        candidate = match.group(1).strip(" .,:;()")
+        if candidate.casefold() not in {"the office", "home", "work", "school"}:
+            company = candidate
+            break
+    occupation = ""
+    for match in _CONTEXT_ROLE_RE.finditer(context):
+        candidate = (match.group(1) or match.group(2) or "").strip(" .,:;")
+        if candidate and candidate.casefold() not in {"the office", "the team"}:
+            occupation = candidate
+            break
+    return {key: value for key, value in {"category": category, "company": company, "occupation": occupation}.items() if value}
+
+
+def derived_cluster_name(category: str | None, company: str | None) -> str:
+    """Stable human cluster label for People OS and graph consumers."""
+    if company and company.strip():
+        return company.strip()
+    labels = {
+        "FAMILY": "Family", "FRIENDS": "Friends", "COLLEAGUES": "Colleagues",
+        "COUSINS": "Cousins", "RELATIVES": "Relatives", "IMPORTANT": "Important",
+        "NEW_CONTACT": "New contacts", "NETWORK": "Network",
+    }
+    return labels.get(str(category or "NETWORK").upper(), "Network")
+
+
+async def _ensure_cluster(db, person: Person) -> bool:
+    """Attach a person to the stable company/category cluster derived from context."""
+    name = derived_cluster_name(_enum_value(person.category), person.company)
+    cluster = (await db.execute(
+        select(Cluster).where(func.lower(Cluster.name) == name.casefold()).limit(1)
+    )).scalars().first()
+    if cluster is None:
+        cluster = Cluster(name=name)
+        db.add(cluster)
+        await db.flush()
+    if person.cluster_id != cluster.id:
+        person.cluster_id = cluster.id
+        return True
+    return False
+
+
 async def relationship_ingest_mentions(
     text: str,
     source: str = "journal",
@@ -155,28 +220,52 @@ async def relationship_ingest_mentions(
         by_name = {p.name.casefold(): p for p in existing}
         created: list[dict[str, str]] = []
         matched: list[str] = []
+        changed_any = False
         for name in names:
             person = by_name.get(name.casefold())
             if person is None and len(name.split()) == 1:
                 aliases = [p for p in existing if p.name.casefold().startswith(f"{name.casefold()} ")]
                 if len(aliases) == 1:
                     person = aliases[0]
+            context = extract_person_context(text, name)
             if person is not None:
+                changed = False
+                if context.get("category") and _enum_value(person.category) in {"NETWORK", "NEW_CONTACT"}:
+                    person.category = context["category"]
+                    changed = True
+                if context.get("company") and not person.company:
+                    person.company = context["company"]
+                    changed = True
+                if context.get("occupation") and not person.occupation:
+                    person.occupation = context["occupation"]
+                    changed = True
+                if changed:
+                    person.updated_at = _now()
+                    changed_any = True
+                if await _ensure_cluster(db, person):
+                    changed_any = True
                 matched.append(person.name)
                 continue
             normalized = re.sub(r"[^a-z0-9]+", " ", name.casefold()).strip()
             if normalized in GROUP_CONTACT_LABELS:
                 continue
-            person = Person(name=name, category="NETWORK", health_score=1.0)
+            person = Person(
+                name=name,
+                category=context.get("category", "NETWORK"),
+                company=context.get("company") or None,
+                occupation=context.get("occupation") or None,
+                health_score=1.0,
+            )
             db.add(person)
             await db.flush()
+            await _ensure_cluster(db, person)
             db.add(Note(
                 person_id=person.id,
                 content=f"Mentioned in {source}. Review and enrich this contact profile.",
             ))
             by_name[name.casefold()] = person
             created.append({"id": person.id, "name": name})
-        if created:
+        if created or changed_any:
             await db.commit()
         else:
             await db.rollback()
@@ -276,6 +365,7 @@ def _person_dict(p: Person) -> dict[str, Any]:
         "profile_notes": p.profile_notes,
         "contact_frequency_days": p.contact_frequency_days,
         "community_id": p.community_id,
+        "cluster_name": derived_cluster_name(_enum_value(p.category), p.company),
         "betweenness_score": round(p.betweenness_score, 4) if p.betweenness_score else None,
         "streak_weeks": p.streak_weeks,
         "is_archived": p.is_archived,
@@ -536,6 +626,7 @@ async def relationship_graph(limit: int = 200) -> dict[str, Any]:
             "topics_of_interest": p.topics_of_interest or [],
             "introduced_by_id": getattr(p, "introduced_by_id", None),
             "community_id": communities.get(p.id),
+            "cluster_name": derived_cluster_name(_enum_value(p.category), p.company),
             "betweenness": round(betweenness.get(p.id, 0.0), 4),
         }
         nodes.append(node)
