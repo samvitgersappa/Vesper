@@ -19,7 +19,11 @@ the `catalyst_swing` paper account once at worker startup.
 
 import logging
 
+from sqlalchemy import text
+
 from backend.modules.finance.catalyst import llm, news, scores, sources, trader
+from backend.modules.db import session_factory
+from backend.modules.finance.catalyst._util import ist_today
 
 logger = logging.getLogger("vesper.automation.catalyst")
 
@@ -73,6 +77,36 @@ async def catalyst_llm() -> dict:
 
 
 ALL_JOBS["catalyst_llm"] = catalyst_llm
+
+
+async def reconcile_pipeline() -> dict:
+    """Repair any missing Catalyst stage, in dependency order, then trade."""
+    date = ist_today()
+    stages = [
+        "fetch_catalyst_bhavcopy", "fetch_fii_dii", "fetch_index_pcr",
+        "fetch_sector_indices", "compute_market_breadth", "catalyst_screen",
+        "catalyst_news", "catalyst_llm", "catalyst_risk", "catalyst_paper_trade",
+    ]
+    async with session_factory()() as db:
+        rows = (await db.execute(text(
+            "SELECT job_name, status FROM finance.job_runs "
+            "WHERE finished_at LIKE :date AND job_name = ANY(:jobs)"
+        ), {"date": date + "%", "jobs": stages})).all()
+    completed = {row.job_name for row in rows if row.status in {"ok", "holiday_skip"}}
+    ran: list[str] = []
+    repairing = False
+    for stage in stages:
+        if stage in completed and not repairing:
+            continue
+        repairing = True
+        result = await ALL_JOBS[stage]()
+        ran.append(stage)
+        if not result.get("ok", True):
+            return {"ok": False, "job": "catalyst_reconcile", "date": date, "ran": ran, "failed": stage}
+    return {"ok": True, "job": "catalyst_reconcile", "date": date, "ran": ran}
+
+
+ALL_JOBS["catalyst_reconcile"] = reconcile_pipeline
 
 
 async def ensure_catalyst_account() -> None:

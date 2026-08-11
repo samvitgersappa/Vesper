@@ -8,16 +8,16 @@ Welcome to your second brain.
 ## Start here
 
 - [[00 Journal]] — daily journal entries
-- [[00 Home]] — home notes
-- [[01 People]] — people and relationships
-- [[02 Daily]] — daily notes
-- [[03 Areas]] — areas of responsibility
+- [[01 Inbox]] — uncategorized captures
+- [[02 Projects]] — active projects
 - [[03 Knowledge]] — captured knowledge
-- [[04 Projects]] — active projects
-- [[05 Learning]] — learning and study
-- [[07 Technologies]] — technology notes
-- [[09 Resources]] — resources
-- [[11 Meta]] — meta notes
+- [[04 Learning]] — learning and study
+- [[05 People]] — people and relationships
+- [[06 Finance]] — financial notes
+- [[07 Health]] — health notes
+- [[08 Career]] — career notes
+- [[09 Archive]] — archived notes
+- [[99 Assets]] — attached assets
 
 ## Search
 

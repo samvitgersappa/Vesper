@@ -8,8 +8,10 @@ streak tracking, and urgency ratio are copied verbatim from ProjectVesper.
 Reads/writes the `relationship` Postgres schema. All returns are plain dicts.
 """
 
+import os
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from sqlalchemy import select, func, or_
@@ -29,7 +31,7 @@ from backend.db.postgres.schemas.relationship.models import (
 )
 from backend.modules.common import publish
 from backend.modules.db import session_factory
-from backend.events.catalog import INTERACTION_LOGGED, PERSON_UPDATED
+from backend.events.catalog import INTERACTION_LOGGED, KNOWLEDGE_INDEXED, PERSON_UPDATED
 
 CATEGORY_FREQUENCY = {
     "FAMILY": 7,
@@ -196,6 +198,31 @@ async def _ensure_cluster(db, person: Person) -> bool:
     return False
 
 
+def _ensure_people_note(person: Person) -> str | None:
+    """Create a minimal vault note so every discovered person is in the Brain."""
+    vault = os.environ.get("HERMES_VAULT_PATH", "").strip()
+    if not vault:
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "-", person.name.casefold()).strip("-")
+    if not slug:
+        return None
+    path = Path(vault) / "05 People" / f"{slug}.md"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(
+                f"# {person.name}\n\n"
+                f"Relationship: {derived_cluster_name(_enum_value(person.category), person.company)}\n"
+                f"Company: {person.company or 'Unknown'}\n"
+                f"Role: {person.occupation or 'Unknown'}\n",
+                encoding="utf-8",
+            )
+            return str(path)
+    except OSError:
+        return None
+    return None
+
+
 async def relationship_ingest_mentions(
     text: str,
     source: str = "journal",
@@ -244,6 +271,9 @@ async def relationship_ingest_mentions(
                     changed_any = True
                 if await _ensure_cluster(db, person):
                     changed_any = True
+                note_path = _ensure_people_note(person)
+                if note_path:
+                    publish(KNOWLEDGE_INDEXED, {"path": note_path, "action": "person_note"})
                 matched.append(person.name)
                 continue
             normalized = re.sub(r"[^a-z0-9]+", " ", name.casefold()).strip()
@@ -259,6 +289,9 @@ async def relationship_ingest_mentions(
             db.add(person)
             await db.flush()
             await _ensure_cluster(db, person)
+            note_path = _ensure_people_note(person)
+            if note_path:
+                publish(KNOWLEDGE_INDEXED, {"path": note_path, "action": "person_note"})
             db.add(Note(
                 person_id=person.id,
                 content=f"Mentioned in {source}. Review and enrich this contact profile.",

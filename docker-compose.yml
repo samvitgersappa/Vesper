@@ -65,6 +65,7 @@ services:
     environment:
       APP_MODE: api
       PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-vesper}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-vesper}
       HERMES_VAULT_PATH: ${HERMES_VAULT_PATH_ABS}
     volumes:
       - data_backend:/app/backend/data
@@ -94,6 +95,8 @@ services:
       - .env
     environment:
       APP_MODE: worker
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-vesper}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-vesper}
+      VESPER_NULL_POOL: "1"
       # Mounted bind path must equal the host's absolute vault path so DB
       # vault_path rows (written by host MCP servers) match container writes.
       HERMES_VAULT_PATH: ${HERMES_VAULT_PATH_ABS}

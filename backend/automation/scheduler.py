@@ -73,6 +73,7 @@ JOB_SCHEDULE = {
     "catalyst_llm": {"trigger": "cron", "hour": 18, "minute": 40, "day_of_week": "mon-fri"},
     "catalyst_risk": {"trigger": "cron", "hour": 18, "minute": 50, "day_of_week": "mon-fri"},
     "catalyst_paper_trade": {"trigger": "cron", "hour": 19, "minute": 0, "day_of_week": "mon-fri"},
+    "catalyst_reconcile": {"trigger": "cron", "hour": 19, "minute": 10, "day_of_week": "mon-fri"},
 }
 
 
@@ -312,6 +313,15 @@ def run() -> None:
             asyncio.run(_catch_up())
         except Exception as exc:  # pragma: no cover
             logger.warning("catch-up paper_trade_eod failed: %s", exc)
+
+        # Repair the complete Catalyst pipeline before the legacy paper-trade
+        # catch-up below. This covers missed news/LLM/risk stages after restarts.
+        try:
+            from backend.automation.jobs.catalyst import reconcile_pipeline
+            reconcile = asyncio.run(reconcile_pipeline())
+            logger.info("catch-up: catalyst reconciliation complete (ran=%s)", reconcile.get("ran", []))
+        except Exception as exc:
+            logger.warning("catch-up catalyst reconciliation failed: %s", exc)
 
         # Catalyst paper trader: run if today's catalyst_llm/catalyst_risk have
         # already produced data (the cron schedule feeds them before the trade).
