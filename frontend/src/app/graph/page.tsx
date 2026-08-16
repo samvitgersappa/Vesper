@@ -30,14 +30,22 @@ type Person = {
 type Edge = { id?: string; person_a_id: string; person_b_id: string; strength?: string; label?: string; weight?: number };
 type SimNode = Person & { x?: number; y?: number; fx?: number | null; fy?: number | null; isCenter?: boolean; _radius?: number };
 
-const CATEGORIES = ["FAMILY", "FRIENDS", "IMPORTANT", "COUSINS", "RELATIVES", "COLLEAGUES", "NEW_CONTACT", "NETWORK"];
+// Ring order = radial distance from "YOU" (closest → farthest). Family sits
+// nearest, then cousins → relatives → friends → colleagues → important → new
+// contacts → network at the outer edge.
+const CATEGORIES = ["FAMILY", "COUSINS", "RELATIVES", "FRIENDS", "COLLEAGUES", "IMPORTANT", "NEW_CONTACT", "NETWORK"];
+const CATEGORY_RING: Record<string, number> = {
+  FAMILY: 0, COUSINS: 1, RELATIVES: 2, FRIENDS: 3, COLLEAGUES: 4, IMPORTANT: 5, NEW_CONTACT: 6, NETWORK: 7,
+};
+const RING_BASE = 90;
+const RING_SPACING = 88;
 const CATEGORY_COLORS: Record<string, string> = {
   FAMILY: "#fb7185", FRIENDS: "#f59e0b", IMPORTANT: "#facc15", COUSINS: "#c084fc",
   RELATIVES: "#e879f9", COLLEAGUES: "#2dd4bf", NEW_CONTACT: "#60a5fa", NETWORK: "#94a3b8",
 };
 const CATEGORY_LABELS: Record<string, string> = {
-  FAMILY: "Family", FRIENDS: "Friends", IMPORTANT: "Important", COUSINS: "Cousins",
-  RELATIVES: "Relatives", COLLEAGUES: "Colleagues", NEW_CONTACT: "New contact", NETWORK: "Network",
+  FAMILY: "Family", COUSINS: "Cousins", RELATIVES: "Relatives", FRIENDS: "Friends",
+  COLLEAGUES: "Colleagues", IMPORTANT: "Important", NEW_CONTACT: "New contact", NETWORK: "Network",
 };
 
 function health(score?: number) {
@@ -118,9 +126,9 @@ export default function Graph() {
       .force("link", forceLink<any, any>(simLinks).id((d: SimNode) => d.id).distance((d: any) => d.isCenterLink ? 170 : 105).strength((d: any) => d.isCenterLink ? 0.08 : 0.42))
       .force("charge", forceManyBody().strength(-240).distanceMax(750))
       .force("center", forceCenter(W / 2, H / 2))
-      .force("radial", forceRadial((d: SimNode) => d.isCenter ? 0 : 110 + (1 - (d.health_score ?? 0.5)) * 170, W / 2, H / 2).strength(0.2))
+      .force("radial", forceRadial((d: SimNode) => d.isCenter ? 0 : RING_BASE + (CATEGORY_RING[d.category ?? "NETWORK"] ?? 7) * RING_SPACING, W / 2, H / 2).strength(0.55))
       .force("collide", forceCollide<SimNode>().radius((d) => d.isCenter ? 28 : 10 + (d.betweenness ?? 0) * 22).strength(1))
-      .force("x", forceX(W / 2).strength(0.04)).force("y", forceY(H / 2).strength(0.04));
+      .force("x", forceX(W / 2).strength(0.02)).force("y", forceY(H / 2).strength(0.02));
     const lines = root.append("g").selectAll("line").data(simLinks).join("line")
       .attr("stroke", (e: any) => e.isCenterLink ? "rgba(255,255,255,.07)" : (e.strength === "STRONG" ? "#c9793f" : e.strength === "WEAK" ? "#5b7c99" : "#a78bfa"))
       .attr("stroke-opacity", (e: any) => e.isCenterLink ? 0.3 : 0.65)
@@ -157,7 +165,8 @@ export default function Graph() {
       group.select(".nlabel").attr("opacity", (d: SimNode) => d.isCenter || showLabels ? 1 : 0);
     };
     simulation.on("tick", draw);
-    setTimeout(() => svg.call(zoomBehavior.transform, zoomIdentity.translate(0, 0).scale(Math.min(1.15, Math.max(0.7, W / 900)))), 450);
+    const outerR = RING_BASE + 7 * RING_SPACING + 60;
+    setTimeout(() => svg.call(zoomBehavior.transform, zoomIdentity.translate(0, 0).scale(Math.min(1.1, Math.max(0.5, (W * 0.46) / outerR)))), 450);
     return () => { simulation.stop(); svg.on(".zoom", null); zoomRef.current = null; };
   }, [filtered, filteredEdges, showLabels]);
 

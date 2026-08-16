@@ -84,6 +84,41 @@ def test_labeled_team_list_extracts_every_contact():
     ]
 
 
+def test_person_mentions_ignore_tools_and_tech():
+    from backend.modules.relationship.logic import extract_person_mentions
+
+    text = "Used Airflow for scheduling and Spark for processing, then deployed with Kubernetes on Windows."
+    assert extract_person_mentions(text) == []
+    assert extract_person_mentions("Worked with Python and Windows on the laptop setup.") == []
+    assert extract_person_mentions("[[Airflow]] drives the data pipeline.") == []
+
+
+def test_person_mentions_ignore_month_abbreviations():
+    from backend.modules.relationship.logic import extract_person_mentions
+
+    text = "Met Priya about the demo (Aug 14). Look up birthdays for Sriram, Jynanadeep, and Vishnu."
+    assert extract_person_mentions(text) == ["Priya", "Sriram", "Jynanadeep", "Vishnu"]
+
+
+def test_person_mentions_still_capture_real_rosters():
+    from backend.modules.relationship.logic import extract_person_mentions
+
+    text = "Deployed with Sidhant and Shreenath on the Airflow cluster."
+    assert extract_person_mentions(text, ["Sidhant", "Shreenath"]) == ["Sidhant", "Shreenath"]
+
+
+def test_is_tool_like_rejects_heads_and_tech():
+    from backend.modules.relationship.logic import is_tool_like
+
+    assert is_tool_like("Airflow")
+    assert is_tool_like("python")
+    assert is_tool_like("Windows")
+    assert is_tool_like("08-Career")
+    assert is_tool_like("Aug")
+    assert not is_tool_like("Divya Gersappa")
+    assert not is_tool_like("Sidhant")
+
+
 def test_compute_analytics_pagerank_and_clustering():
     from backend.modules.graph.logic import compute_analytics
 

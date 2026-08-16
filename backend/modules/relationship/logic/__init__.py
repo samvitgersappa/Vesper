@@ -72,7 +72,8 @@ GROUP_CONTACT_LABELS = {
 
 _MENTION_WIKILINK_RE = re.compile(r"\[\[([^\[\]|#]+)(?:[|#][^\]]*)?\]\]")
 _MENTION_PHRASE_RE = re.compile(
-    r"\b(?i:met|spoke with|talked to|called|messaged|emailed|visited|from|with)\s+"
+    r"\b(?i:met|met with|met up with|spoke with|talked to|chatted with|caught up with|"
+    r"connected with|called|messaged|emailed|visited)\s+"
     r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})"
 )
 _MENTION_LIST_RE = re.compile(
@@ -102,6 +103,91 @@ _MENTION_STOPWORDS = {
     "Manager", "Senior", "SE", "Team", "Colleagues", "Family", "Friends",
 }
 
+#: Lowercased names that are almost always tools/tech/places, never people.
+#: Journal prose often capitalizes them ("used Airflow for scheduling", "ran
+#: Python scripts on Windows"), so the mention extractor must not turn them into
+#: relationship contacts. Intentional misses are fine — real rosters are still
+#: captured via wikilinks, person-verb phrases, and `team:` lists.
+_TOOL_TERMS = {
+    "airflow", "spark", "kafka", "kubernetes", "k8s", "docker", "docker-compose",
+    "postgres", "postgresql", "mysql", "mariadb", "mongodb", "redis", "sqlite",
+    "elasticsearch", "opensearch", "cassandra", "clickhouse", "neo4j", "hadoop",
+    "hive", "hbase", "flink", "beam", "kinesis", "snowflake", "databricks",
+    "bigquery", "redshift", "teradata", "synapse", "trino", "presto", "dbt",
+    "airbyte", "fivetran", "matillion", "stitch", "glue", "emr",
+    "python", "python3", "javascript", "typescript", "java", "csharp", "golang",
+    "golang", "ruby", "php", "swift", "kotlin", "rust", "scala", "sql", "nosql",
+    "graphql", "rest", "json", "xml", "yaml", "toml",
+    "react", "reactjs", "reactnative", "nextjs", "next.js", "vue", "angular",
+    "svelte", "node", "nodejs", "deno", "django", "flask", "fastapi", "spring",
+    "laravel", "rails", "express", "hibernate", "jquery", "tailwind", "bootstrap",
+    "pandas", "numpy", "scipy", "scikit-learn", "tensorflow", "pytorch", "keras",
+    "jupyter", "colab", "anaconda", "conda",
+    "github", "gitlab", "bitbucket", "git", "svn", "mercurial", "circleci",
+    "githubactions", "travis", "jenkins", "teamcity", "bamboo", "azuredevops",
+    "codefresh", "octopus", "harness", "argocd", "helm",
+    "jira", "confluence", "slack", "teams", "microsoftteams", "discord", "zoom",
+    "notion", "obsidian", "quartz", "linear", "asana", "trello", "monday",
+    "clickup", "airtable", "excel", "word", "powerpoint", "outlook", "onenote",
+    "sharepoint", "googlemeet", "skype", "telegram", "whatsapp", "signal",
+    "aws", "azure", "gcp", "googlecloud", "cloudflare", "heroku", "vercel",
+    "netlify", "railway", "render", "fly", "supabase", "firebase", "stripe",
+    "paypal", "razorpay", "shopify", "wordpress", "wix", "squarespace",
+    "terraform", "ansible", "puppet", "chef", "cloudformation", "pulumi", "saltstack",
+    "prometheus", "grafana", "kibana", "datadog", "newrelic", "sentry", "logstash",
+    "jaeger", "opentelemetry", "thanos", "loki", "zabbix", "nagios",
+    "nginx", "apache", "caddy", "haproxy", "tomcat", "jetty", "iis",
+    "linux", "unix", "ubuntu", "debian", "centos", "rhel", "fedora", "arch",
+    "windows", "macos", "android", "ios", "kali", "alpine", "manjaro",
+    "vscode", "pycharm", "intellij", "webstorm", "eclipse", "atom", "vim", "neovim",
+    "emacs", "sublime", "xcode", "androidstudio", "gitbash", "wsl", "putty",
+    "tableau", "powerbi", "power bi", "looker", "metabase", "superset", "qlik",
+    "domo", "cognos", "microstrategy", "sap", "oracle", "salesforce", "servicenow",
+    "netsuite", "workday", "hubspot", "zendesk", "intercom", "segment", "amplitude",
+    "mixpanel", "heap", "optimizely", "ga4", "googleanalytics", "ahrefs", "semrush",
+    "moz", "surfer", "screamingfrog", "webflow", "framer", "carrd",
+    "terraform", "opentofu", "vault", "consul", "nomad",
+    "python", "selenium", "playwright", "cypress", "puppeteer", "postman",
+    "insomnia", "swagger", "openapi", "soap", "kafka", "rabbitmq", "celery",
+    "sqs", "sns", "pubsub", "zeromq", "nsq", "pulsar",
+    "chrome", "firefox", "safari", "edge", "opera", "brave",
+    "spotify", "notion", "obsidian", "duolingo", "netflix", "youtube", "instagram",
+    "twitter", "linkedin", "facebook", "whatsapp", "reddit", "discord", "medium",
+    "stackoverflow", "stackoverflow", "geeksforgeeks", "leetcode", "hackerrank",
+    "codewars", "kaggle", "udemy", "coursera", "edx", "pluralsight", "datacamp",
+    "codecademy", "freecodecamp", "theodinproject",
+    "openai", "gpt", "chatgpt", "claude", "gemini", "copilot", "mistral", "llama",
+    "huggingface", "langchain", "llamaindex", "crawl4ai", "ollama", "whisper",
+    "tesseract", "opencv", "ffmpeg", "chrome", "blender", "photoshop", "illustrator",
+    "lightroom", "figma", "sketch", "invision", "xd", "canva", "davinci", "premiere",
+    "finalcut", "audacity", "obs", "streamlabs", "obsidian", "evernote", "roam",
+    "bear", "apple", "google", "microsoft", "amazon", "meta", "netflix", "uber",
+    "zoom", "meet", "calendar", "gmail", "outlook", "drive", "dropbox", "onedrive",
+    "icloud", "notability", "goodnotes", "kindle", "audible",
+    "contabo", "vultr", "digitalocean", "linode", "hetzner", "ovh", "godaddy",
+    "namecheap", "cloudways", "kaggle", "githubcopilot", "codespaces",
+    # Month/day abbreviations ("Aug 14", "Fri") are calendar noise, not people.
+    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct",
+    "nov", "dec", "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri",
+    "sat", "sun",
+}
+
+
+def is_tool_like(name: str) -> bool:
+    """True when a candidate name is a tool/tech/heading rather than a person.
+
+    Person names never start with a digit (heading fragments like "08-Career"
+    do), and a lowercased name matching a known tool term is almost always a
+    tool ("Airflow", "Python", "Windows"). Used both when extracting mentions
+    and when pruning stale auto-created contacts.
+    """
+    n = (name or "").strip()
+    if not n:
+        return True
+    if n[0].isdigit():
+        return True
+    return n.casefold() in _TOOL_TERMS
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -127,6 +213,8 @@ def extract_person_mentions(text: str, known_names: Optional[list[str]] = None) 
             return
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name) or "/" in name:
             return
+        if is_tool_like(name):
+            return
         if name.casefold() not in {item.casefold() for item in found}:
             found.append(name)
 
@@ -135,7 +223,15 @@ def extract_person_mentions(text: str, known_names: Optional[list[str]] = None) 
     for match in _MENTION_PHRASE_RE.finditer(content):
         add(match.group(1))
     for match in _MENTION_LIST_RE.finditer(content):
-        for candidate in _MENTION_NAME_RE.findall(match.group(1)):
+        candidates = _MENTION_NAME_RE.findall(match.group(1))
+        # A bare `for`/`with` mention is only trustworthy when several
+        # capitalized names appear together (a real roster like "birthdays for
+        # Sriram, Jynanadeep, Vishnu, Divya"). A lone capitalized word after
+        # `with`/`for` is usually a tool ("used Airflow for scheduling"), and
+        # existing names are reinforced separately below.
+        if len({c.casefold() for c in candidates}) < 2:
+            continue
+        for candidate in candidates:
             add(candidate)
     for match in _MENTION_LABELED_LIST_RE.finditer(content):
         for candidate in _MENTION_NAME_RE.findall(match.group(1)):
@@ -275,6 +371,8 @@ async def relationship_ingest_mentions(
                     person = aliases[0]
             context = extract_person_context(text, name)
             if person is not None:
+                if getattr(person, "is_archived", False):
+                    continue
                 changed = False
                 if context.get("category") and _enum_value(person.category) in {"NETWORK", "NEW_CONTACT"}:
                     person.category = context["category"]
@@ -336,8 +434,11 @@ async def relationship_refresh_people() -> dict[str, Any]:
     vault = os.environ.get("HERMES_VAULT_PATH", "").strip()
     scanned = 0
     if vault:
-        root = Path(vault) / "00 Journal"
-        for path in sorted(root.rglob("*.md")) if root.exists() else []:
+        root = Path(vault)
+        # Journal content is the graph's contact source. Scan the canonical
+        # `00 Journal/` and the legacy/hyphenated `00-Journal/` layouts so
+        # either convention feeds People OS.
+        for path in sorted(root.glob("00 Journal/**/*.md")) + sorted(root.glob("00-Journal/**/*.md")):
             try:
                 await relationship_ingest_mentions(path.read_text(encoding="utf-8", errors="replace"), source=str(path))
                 scanned += 1
@@ -346,13 +447,21 @@ async def relationship_refresh_people() -> dict[str, Any]:
     async with session_factory()() as db:
         people = (await db.execute(select(Person).where(Person.is_archived == False))).scalars().all()  # noqa: E712
         notes = 0
+        pruned = 0
+        for person in people:
+            if is_tool_like(person.name):
+                person.is_archived = True
+                person.updated_at = _now()
+                pruned += 1
+                continue
+            if _ensure_people_note(person):
+                notes += 1
+        await db.commit()
+        people = (await db.execute(select(Person).where(Person.is_archived == False))).scalars().all()  # noqa: E712
         expected = {
             re.sub(r"[^a-z0-9]+", "-", person.name.casefold()).strip("-")
             for person in people
         }
-        for person in people:
-            if _ensure_people_note(person):
-                notes += 1
         people_dir = Path(vault) / "05 People" if vault else None
         removed = 0
         if people_dir and people_dir.exists():
@@ -366,7 +475,7 @@ async def relationship_refresh_people() -> dict[str, Any]:
                         removed += 1
                 except OSError:
                     continue
-    return {"ok": True, "journals_scanned": scanned, "people": len(people), "notes_updated": notes, "stale_notes_removed": removed}
+    return {"ok": True, "journals_scanned": scanned, "people": len(people), "notes_updated": notes, "tool_people_archived": pruned, "stale_notes_removed": removed}
 
 
 def _enum_value(x: Any) -> Any:
@@ -1151,15 +1260,27 @@ async def relationship_update_person(person_id: str, field: str, value: str) -> 
                 return {"success": False, "message": "contact_frequency_days must be a number"}
         elif field_lower in ("category", "relation_type"):
             new_value = value.upper()
+            if field_lower == "category" and new_value not in VALID_CATEGORIES:
+                return {
+                    "success": False,
+                    "message": f"Invalid category '{value}'. Valid categories: {', '.join(sorted(VALID_CATEGORIES))}",
+                }
         elif field_lower in ("topics_of_interest", "hobbies"):
             new_value = [item.strip() for item in re.split(r"[,\n]", value or "") if item.strip()]
 
         setattr(p, field_lower, new_value)
         if field_lower in _HEALTH_RELEVANT_FIELDS:
             p.health_score = calculate_health_score(p)
+        if field_lower in ("category", "company", "occupation"):
+            # Re-attach the cluster so the graph/People-OS groupings follow a
+            # category move made on the kanban board.
+            await _ensure_cluster(db, p)
         p.updated_at = _now()
 
         await db.commit()
+
+        if field_lower in ("category", "company", "occupation", "name"):
+            _ensure_people_note(p)
 
         result = {
             "success": True,
@@ -1168,6 +1289,7 @@ async def relationship_update_person(person_id: str, field: str, value: str) -> 
             "field": field_lower,
             "value": new_value.date().isoformat() if isinstance(new_value, datetime) else str(new_value),
             "health_score": round(p.health_score, 2),
+            "cluster_name": derived_cluster_name(_enum_value(p.category), p.company),
         }
     publish(PERSON_UPDATED, {
         "person_id": person_id,

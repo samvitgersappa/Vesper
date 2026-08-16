@@ -47,6 +47,85 @@ async def test_relationship_search_known_person():
             await db.commit()
 
 
+async def test_update_person_validates_category_and_moves_cluster(tmp_path, monkeypatch):
+    """Kanban category moves are validated and re-derive the graph cluster."""
+    import uuid
+
+    from backend.modules.relationship.logic import (
+        relationship_create_person, relationship_person_detail,
+        relationship_update_person,
+    )
+    from backend.modules.db import session_factory
+    from sqlalchemy import text
+
+    vault = tmp_path / "vault"
+    (vault / "05 People").mkdir(parents=True)
+    monkeypatch.setenv("HERMES_VAULT_PATH", str(vault))
+
+    created = await relationship_create_person(
+        name=f"TEST Kanban {uuid.uuid4().hex[:8]}", category="NEW_CONTACT", notes="kanban fixture",
+    )
+    pid = created["id"]
+    try:
+        bad = await relationship_update_person(pid, "category", "PLANETS")
+        assert bad["success"] is False
+        assert "Invalid category" in bad["message"]
+
+        ok = await relationship_update_person(pid, "category", "IMPORTANT")
+        assert ok["success"] is True
+        assert ok["cluster_name"] == "Important"
+
+        detail = await relationship_person_detail(pid)
+        assert detail["category"] == "IMPORTANT"
+        assert detail["cluster_name"] == "Important"
+    finally:
+        async with session_factory()() as db:
+            await db.execute(text("DELETE FROM relationship.persons WHERE id = :id"), {"id": pid})
+            await db.commit()
+
+
+async def test_refresh_archives_tool_like_people(tmp_path, monkeypatch):
+    """Refresh archives auto-created tool contacts and drops their People notes."""
+    import uuid
+
+    from backend.modules.relationship.logic import (
+        relationship_create_person, relationship_refresh_people,
+    )
+    from backend.modules.db import session_factory
+    from sqlalchemy import text
+
+    vault = tmp_path / "vault"
+    (vault / "00 Journal").mkdir(parents=True)
+    (vault / "05 People").mkdir(parents=True)
+    monkeypatch.setenv("HERMES_VAULT_PATH", str(vault))
+
+    created = await relationship_create_person(
+        name=f"TEST ToolX {uuid.uuid4().hex[:8]}", category="NETWORK", notes="tool fixture",
+    )
+    pid = created["id"]
+    try:
+        # Force the name to a known tool term (create_person rejects nothing,
+        # and the name may legitimately be set later by an LLM/import).
+        async with session_factory()() as db:
+            await db.execute(
+                text("UPDATE relationship.persons SET name = 'Elasticsearch' WHERE id = :id"),
+                {"id": pid},
+            )
+            await db.commit()
+
+        res = await relationship_refresh_people()
+        assert res["tool_people_archived"] >= 1
+
+        from backend.db.postgres.schemas.relationship.models import Person
+        async with session_factory()() as db:
+            person = await db.get(Person, pid)
+            assert person.is_archived is True
+    finally:
+        async with session_factory()() as db:
+            await db.execute(text("DELETE FROM relationship.persons WHERE id = :id"), {"id": pid})
+            await db.commit()
+
+
 # ── Relationship draft_message (Part D) ───────────────────────────────
 async def test_relationship_draft_message_is_draft_only():
     """draft_message composes a draft but never sends — requires approval."""
