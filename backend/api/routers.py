@@ -63,6 +63,7 @@ from backend.modules.relationship.logic import relationship_person_detail
 from backend.modules.relationship.logic import relationship_search
 from backend.modules.relationship.logic import relationship_refresh_people
 from backend.modules.relationship.logic import relationship_update_person
+from backend.modules.relationship.logic import relationship_delete_person
 from backend.modules.relationship.logic import relationship_add_note
 from backend.modules.study.logic import list_tests as study_list_tests
 from backend.modules.study.logic import percentiles as study_percentiles
@@ -116,6 +117,11 @@ async def api_relationship_update_person(person_id: str, payload: dict[str, Any]
     field = str(payload.get("field", ""))
     value = payload.get("value", "")
     return await relationship_update_person(person_id, field, str(value))
+
+
+@router.delete("/relationship/person/{person_id}")
+async def api_relationship_delete_person(person_id: str):
+    return await relationship_delete_person(person_id)
 
 
 @router.post("/relationship/person/{person_id}/notes")

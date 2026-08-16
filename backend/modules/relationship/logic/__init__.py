@@ -1254,10 +1254,13 @@ async def relationship_update_person(person_id: str, field: str, value: str) -> 
                 return {"success": False, "message": f"Invalid date for {field}. Use ISO format."}
             new_value = parsed
         elif field_lower == "contact_frequency_days":
-            try:
-                new_value = int(value)
-            except (TypeError, ValueError):
-                return {"success": False, "message": "contact_frequency_days must be a number"}
+            if value is None or not str(value).strip():
+                new_value = None
+            else:
+                try:
+                    new_value = int(value)
+                except (TypeError, ValueError):
+                    return {"success": False, "message": "contact_frequency_days must be a number"}
         elif field_lower in ("category", "relation_type"):
             new_value = value.upper()
             if field_lower == "category" and new_value not in VALID_CATEGORIES:
@@ -1267,6 +1270,8 @@ async def relationship_update_person(person_id: str, field: str, value: str) -> 
                 }
         elif field_lower in ("topics_of_interest", "hobbies"):
             new_value = [item.strip() for item in re.split(r"[,\n]", value or "") if item.strip()]
+        elif isinstance(value, str) and not value.strip():
+            new_value = None
 
         setattr(p, field_lower, new_value)
         if field_lower in _HEALTH_RELEVANT_FIELDS:
@@ -1357,7 +1362,7 @@ async def relationship_add_reminder(
 
 
 async def relationship_delete_person(person_id: str) -> dict[str, Any]:
-    """Soft-delete a person (is_archived=True)."""
+    """Soft-delete a person (is_archived=True) and drop their managed People note."""
     async with session_factory()() as db:
         p = await db.get(Person, person_id)
         if not p:
@@ -1366,6 +1371,20 @@ async def relationship_delete_person(person_id: str) -> dict[str, Any]:
         p.updated_at = _now()
         await db.commit()
         result = {"success": True, "person_id": person_id, "person": p.name, "is_archived": True}
+    vault = os.environ.get("HERMES_VAULT_PATH", "").strip()
+    if vault:
+        slug = re.sub(r"[^a-z0-9]+", "-", p.name.casefold()).strip("-")
+        if slug:
+            path = Path(vault) / "05 People" / f"{slug}.md"
+            try:
+                if path.exists():
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                    if text.startswith(f"# {p.name}\n") and all(
+                        marker in text for marker in ("Relationship:", "Company:", "Role:")
+                    ):
+                        path.unlink()
+            except OSError:
+                pass
     publish(PERSON_UPDATED, {
         "person_id": person_id,
         "name": p.name,

@@ -24,13 +24,13 @@ export async function api<T = unknown>(
 
 export async function apiWrite<T = unknown>(
   path: string,
-  method: "PATCH" | "POST",
-  body: Record<string, unknown>,
+  method: "PATCH" | "POST" | "DELETE",
+  body?: Record<string, unknown>,
 ): Promise<T> {
   const res = await fetch(`${API_BASE}/api${path}`, {
     method,
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
     const responseBody = await res.text();

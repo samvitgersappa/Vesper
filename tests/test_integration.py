@@ -84,6 +84,89 @@ async def test_update_person_validates_category_and_moves_cluster(tmp_path, monk
             await db.commit()
 
 
+async def test_update_person_full_edit_and_delete(tmp_path, monkeypatch):
+    """Card fields (about, position, dates, socials) edit-and-clear cleanly, and
+    delete archives the person plus their managed People note."""
+    import uuid
+
+    from backend.modules.relationship.logic import (
+        relationship_create_person, relationship_person_detail,
+        relationship_update_person, relationship_delete_person,
+        relationship_search,
+    )
+    from backend.modules.db import session_factory
+    from sqlalchemy import text
+
+    vault = tmp_path / "vault"
+    (vault / "05 People").mkdir(parents=True)
+    monkeypatch.setenv("HERMES_VAULT_PATH", str(vault))
+
+    created = await relationship_create_person(
+        name=f"TEST Edit {uuid.uuid4().hex[:8]}",
+        category="NETWORK",
+        notes="edit fixture",
+    )
+    pid = created["id"]
+    try:
+        full = {
+            "occupation": "Product Manager",
+            "company": "Acme",
+            "bio": "Leads platform",
+            "email": "edit@acme.test",
+            "phone": "+919999999999",
+            "city": "Bengaluru",
+            "meeting_place": "Confluence 2024",
+            "birthday": "1992-03-14",
+            "linkedin_url": "https://linkedin.in/in/edit",
+            "topics_of_interest": "AI, community",
+            "hobbies": "cycling",
+            "category": "IMPORTANT",
+            "relation_type": "COLLEAGUE",
+        }
+        for field, value in full.items():
+            res = await relationship_update_person(pid, field, value)
+            assert res["success"] is True, (field, res)
+
+        detail = await relationship_person_detail(pid)
+        assert detail["occupation"] == "Product Manager"
+        assert detail["bio"] == "Leads platform"
+        assert detail["email"] == "edit@acme.test"
+        assert detail["city"] == "Bengaluru"
+        assert detail["meeting_place"] == "Confluence 2024"
+        assert detail["birthday"] == "1992-03-14"
+        assert detail["category"] == "IMPORTANT"
+        assert detail["relation_type"] == "COLLEAGUE"
+        assert set(detail["topics_of_interest"]) == {"AI", "community"}
+        assert detail["hobbies"] == ["cycling"]
+
+        await relationship_update_person(pid, "bio", "")
+        cleared = await relationship_person_detail(pid)
+        assert cleared["bio"] is None
+
+        await relationship_update_person(pid, "contact_frequency_days", "")
+        cleared2 = await relationship_person_detail(pid)
+        assert cleared2["contact_frequency_days"] is None
+
+        slug = created["name"].casefold().replace(" ", "-")
+        note_path = vault / "05 People" / f"{slug}.md"
+        assert note_path.exists()
+
+        deleted = await relationship_delete_person(pid)
+        assert deleted["success"] is True
+        async with session_factory()() as db:
+            from backend.db.postgres.schemas.relationship.models import Person
+            person = await db.get(Person, pid)
+            assert person.is_archived is True
+        assert not note_path.exists()
+        async with session_factory()() as db:
+            await db.execute(text("DELETE FROM relationship.persons WHERE id = :id"), {"id": pid})
+            await db.commit()
+    finally:
+        async with session_factory()() as db:
+            await db.execute(text("DELETE FROM relationship.persons WHERE id = :id"), {"id": pid})
+            await db.commit()
+
+
 async def test_refresh_archives_tool_like_people(tmp_path, monkeypatch):
     """Refresh archives auto-created tool contacts and drops their People notes."""
     import uuid
