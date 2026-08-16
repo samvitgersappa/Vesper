@@ -1,7 +1,7 @@
 # Vesper — Personal Intelligence Operating System
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-32%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen.svg)](tests/)
 
 One folder (`vesper/`) containing a complete personal-intelligence system: a
 Relationship OS, a Finance OS, and a Knowledge OS, unified behind a single
@@ -34,11 +34,26 @@ modeled after the ProjectVesper graph experience, but uses Vesper's own REST
 and Postgres data path. The map is centered on `YOU`, groups contacts by
 category, encodes relationship health in node color, and supports search,
 visibility controls, zoom/reset, drag-to-arrange, hover context, and an
-inspector for contact details and recent interactions. `/people/` remains the
-editable contact-management view and links back to the map. People OS supports
-ProjectVesper-style board/list views, category filters, health signals, adding
-contacts, editing profiles, logging interactions, meeting preparation, and
-draft-only reconnect messages.
+inspector for contact details and recent interactions.
+
+The graph lays out people radially by relationship ring so distance is
+meaningful: family sits closest to `YOU`, then cousins, relatives, friends,
+colleagues, important people, new contacts, and the network on the outer
+edge. Contact cards are editable directly on the board and in the inspector,
+and deleting a person archives the contact and removes their managed People
+vault note so the second brain stops linking to them.
+
+`/people/` is the editable contact-management view and links back to the map.
+People OS supports ProjectVesper-style board/list/cluster views, category
+filters, health signals, adding contacts, logging interactions, meeting
+preparation, and draft-only reconnect messages. The board is a kanban-style
+drag-and-drop workspace — moving a card between category columns persists the
+change, updates the contact's cluster, and is immediately reflected in the
+graph. Editing a card covers the full profile: name, nickname, position
+(occupation), company, about (bio), email/phone, birthday/anniversary,
+location, where you met, socials (LinkedIn, Twitter, Instagram, GitHub),
+category, relation type, contact cadence, profile notes, topics of interest,
+and hobbies.
 
 All three relationship surfaces use the same relationship module logic exposed
 to Hermes: the graph calls `/api/relationship/graph`, People OS calls the
@@ -78,10 +93,12 @@ day agenda.
 Journal/questionnaire writes also run deterministic people ingestion. Explicit
 `[[person]]` links, People-vault note names, and conservative prose patterns
 such as “met Priya Shah” or “birthdays for Sriram, Vishnu” create or match a
-`relationship.persons` contact with provenance notes. The graph adapter then
-links the journal/knowledge note to that same person node, so future mentions
-appear in People OS, the relationship graph, and the universal intelligence
-graph without requiring a second manual capture.
+`relationship.persons` contact with provenance notes. Tool and technology names
+(airflow, python, windows, months/days, …) are deliberately rejected so tools
+never become contacts. The graph adapter then links the journal/knowledge note
+to that same person node, so future mentions appear in People OS, the
+relationship graph, and the universal intelligence graph without requiring a
+second manual capture.
 
 ## Open Source
 
@@ -212,6 +229,7 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 | `journal_questionnaire_deadline` | 23:55 daily | Guarantees a journal record exists before midnight |
 | `vault_backup_publish` | 00:15 daily | Pushes the Obsidian vault to a private GitHub repo + triggers the Quartz garden rebuild |
 | `hermes_mirror` | every 5m | Mirrors Hermes tool-calls/usage into the `hermes` Postgres schema |
+| `people_vault_refresh` | 00:10 daily | Reconciles journal mentions and People-vault notes; archives tool-like contacts and drops stale notes |
 | `notification_sweep_morning` | 08:00 daily | Morning Telegram digest |
 | `notification_sweep_evening` | 18:05 daily | Evening Telegram digest (fires after paper_trade_eod to show fresh NAV) |
 | `fetch_catalyst_bhavcopy` | 18:00 Mon–Fri | NSE Common Bhavcopy delivery data → `delivery_stats` |
@@ -220,9 +238,11 @@ Read `plan.md` for the full architecture. The non-negotiable rules:
 | `fetch_sector_indices` | 18:10 Mon–Fri | yfinance sector indices → `sector_scores_daily` |
 | `compute_market_breadth` | 18:15 Mon–Fri | A/D, % > 50DMA/200DMA, 52w highs/lows from `equity_daily` |
 | `catalyst_screen` | 18:20 Mon–Fri | Layer 1/2/3 multiplicative scoring → `catalyst_scores` + watchlist funnel |
+| `catalyst_news` | 18:30 Mon–Fri | News/LLM spend for the funnel's surviving candidates |
 | `catalyst_llm` | 18:40 Mon–Fri | Capped DeepSeek V4 Flash catalyst analysis over the top of the funnel |
 | `catalyst_risk` | 18:50 Mon–Fri | Exits-only risk pass: ATR/trailing stops, rank, negative-catalyst, time |
 | `catalyst_paper_trade` | 19:00 Mon–Fri | Catalyst Swing entries (cost-gated) + NAV snapshot |
+| `catalyst_reconcile` | 19:10 Mon–Fri | Reconciles paper trade fills, positions, and NAV after the catalyst run |
 
 The catalyst funnel screens the full Nifty-500 universe rather than the first
 alphabetical slice. Before news/LLM spend, it rejects stale or illiquid names
@@ -237,21 +257,24 @@ swing trader is the 6th strategy (`catalyst_swing`) and is funded on a **₹10L
 (1,000,000) paper account** — position sizing scales off account equity, so the
 funnel, cost gate and swing engine are exercised at meaningful notional sizes.
 
-## Module MCP servers (67 tools)
+## Module MCP servers (70 tools + IPO over REST)
 
 | Server | Tools | Purpose |
 |---|---|---|
-| journal | 12 | `write_entry`, `get_entry`, `complete_day`, expense logging, spending summaries, workout logging, streak, resolve… |
-| relationship | 18 | people CRUD, interactions, reminders, introductions, gift ideas, health, search, stats, draft_message |
+| journal | 15 | `write_entry`, `get_entry`, `read_entry`, `update_entry`, `complete_day`, `enrich_entry`, expense logging, spending summaries, workout logging, streak, resolve… |
+| relationship | 18 | people CRUD (create/update/delete), interactions, reminders, introductions, gift ideas, health, search, stats, meetings, draft_message |
 | knowledge | 7 | `capture` (routing), vault search, unified recall (vault + LanceDB + journal), notes edit/delete |
-| finance | 9 | portfolio, trades, signals, nav + catalyst_scores, catalyst_candidates, catalyst_positions, catalyst_usage, catalyst_cost_gate (read-only) |
+| finance | 10 | portfolio, trades, signals, nav + catalyst_scores, catalyst_candidates, catalyst_positions, catalyst_usage, catalyst_cost_gate, catalyst_news (read-only) |
 | study | 8 | tests, readiness, percentiles, study plan |
-| calendar | 3 | birthdays, events, on_this_day |
+| calendar | 2 | birthdays, on_this_day |
 | hobbies | 5 | activity tracking |
-| graph | 5 | nodes, edges, analytics, community |
+| graph | 5 | nodes, edges, analytics, community, snapshot |
+| ipo | 3 (REST only) | list_all, list_upcoming, list_recent |
 
 The Finance server is strictly read-only; the worker/scheduler is the only writer to the
-`finance` schema (plan §16).
+`finance` schema (plan §16). IPO is served over REST (`/api/ipo/*`) for the dashboard — its
+read-only listing server exists under `backend/modules/ipo/` but is not registered as a Hermes
+MCP server.
 
 ## Quick start
 
@@ -383,13 +406,15 @@ stdin-stdout — it never imports anything from this repo.
 VESPER_TESTING=1 .venv/bin/python -m pytest tests/   # needs the stack up
 ```
 
-34 integration tests cover relationship stats/search, journal streak +
-`complete_day` round-trip, the 23:55 deadline job, the graph write adapter,
-LanceDB index + search, scheduler registration, the finance feature store +
-universe refresh, notification triage, the REST API, the event catalog, and the
-catalyst swing trader. Tests that need the live market-data pipeline (the
-DuckDB feature store is empty on a fresh install until the 06:00–07:30 jobs run)
-skip cleanly rather than fail, mirroring the worker's honest degraded mode.
+65 integration tests cover relationship stats/search/crud and full card edits,
+journal streak + `complete_day` round-trip, the 23:55 deadline job, the graph
+write adapter, LanceDB index + search, scheduler registration, the finance
+feature store + universe refresh, notification triage, the REST API, the event
+catalog, the catalyst swing trader, and people-ingestion hygiene (tool names
+and month abbreviations never become contacts). Tests that need the live
+market-data pipeline (the DuckDB feature store is empty on a fresh install
+until the 06:00–07:30 jobs run) skip cleanly rather than fail, mirroring the
+worker's honest degraded mode.
 
 ## Web dashboard
 
