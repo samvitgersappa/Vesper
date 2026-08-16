@@ -33,7 +33,11 @@ rm -rf /quartz/.build
 npx quartz build --directory "${CONTENT_DIR}" --output /quartz/.build
 
 echo "[quartz] publishing build -> ${OUTPUT_DIR}"
+# Wipe the output volume's CONTENTS first (cannot rm the mountpoint itself —
+# "Resource busy") so stale case-collided folders from prior builds
+# (e.g. both 00-Journal and 00-journal) cannot linger after a rename/rsync.
+find "${OUTPUT_DIR}" -mindepth 1 -delete
 mkdir -p "${OUTPUT_DIR}"
-rsync -a --delete /quartz/.build/ "${OUTPUT_DIR}/"
+rsync -a /quartz/.build/ "${OUTPUT_DIR}/"
 
 echo "[quartz] build complete"

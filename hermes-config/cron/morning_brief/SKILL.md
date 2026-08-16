@@ -42,15 +42,23 @@ Pull from module MCP tools and synthesize:
 - Include the publication date or relative age. Do not repeat a story already
   covered in the immediately preceding brief unless there is a material update.
 
-## Paper of the Day
+## Paper of the Day (REQUIRED — always include a link)
 
-- Look at recent arXiv, conference, lab, or peer-reviewed releases. Choose one
-  paper only if it has a meaningful result or a useful connection to Vesper,
-  data systems, AI, or software engineering.
+- EVERY morning brief MUST include a "Paper of the Day" with a **direct,
+  openable link** Samvit can click to read as PDF or on arXiv. Prefer the
+  arXiv abstract page (https://arxiv.org/abs/XXXX.XXXXX) and/or the PDF
+  (https://arxiv.org/pdf/XXXX.XXXXX). A paper mentioned without a clickable
+  link is a failed brief — always attach the URL.
+- Prefer recent arXiv, conference, or lab releases with a meaningful result or
+  a useful connection to Vesper, data systems, AI, or software engineering.
 - Explain in plain language: problem, core idea, result, limitation, and one
-  practical takeaway. Keep it to 4–6 sentences and link or name the source.
-- Do not present a preprint as peer-reviewed, and do not imply that a result is
-  production-ready. If no paper clears that bar, omit this section.
+  practical takeaway. Keep it to 4–6 sentences.
+- Do not present a preprint as peer-reviewed, and do not imply production-ready.
+- IF no genuinely newsworthy paper surfaced that day, DO NOT omit the section —
+  instead surface one solid recent paper from the last ~30 days (arXiv cs.LG /
+  cs.AI / cs.DB / cs.DC) and label it "Recent read" rather than "new". The link
+  requirement is non-negotiable: a morning brief without a paper link is
+  incomplete.
 
 ## Sports Snapshot
 

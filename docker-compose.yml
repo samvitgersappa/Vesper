@@ -91,7 +91,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    restart: "no"
+    restart: unless-stopped
     env_file:
       - .env
     environment:
